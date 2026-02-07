@@ -1,0 +1,79 @@
+//! CLI subcommand definitions for Aegis.
+//!
+//! All user-facing commands are defined here using clap derive macros.
+//! The actual implementation logic lives in the respective modules.
+
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+
+#[derive(Parser)]
+#[command(
+    name = "aegis",
+    version,
+    about = "AI security firewall proxy — local, fast, no cloud",
+    long_about = "Aegis intercepts traffic between your applications and AI API endpoints.\n\
+                  It scans prompts and responses for prompt injection, PII leakage,\n\
+                  credential exposure, and encoded data exfiltration.\n\
+                  All classification runs on-device. Nothing leaves the machine."
+)]
+pub struct Cli {
+    /// Path to aegis.toml config file
+    #[arg(short, long, global = true)]
+    pub config: Option<PathBuf>,
+
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+#[derive(Subcommand)]
+pub enum Command {
+    /// Start the Aegis proxy
+    Start {
+        /// Proxy mode: "gateway" (reverse proxy) or "proxy" (forward/HTTP_PROXY)
+        #[arg(short, long, default_value = "gateway")]
+        mode: String,
+
+        /// Host to bind on
+        #[arg(long)]
+        host: Option<String>,
+
+        /// Port to listen on
+        #[arg(short, long)]
+        port: Option<u16>,
+    },
+
+    /// Stop the running Aegis proxy
+    Stop,
+
+    /// Show Aegis proxy status
+    Status,
+
+    /// View Aegis logs
+    Logs {
+        /// Number of recent log lines to show
+        #[arg(short = 'n', long, default_value = "20")]
+        tail: usize,
+
+        /// Follow log output (like tail -f)
+        #[arg(short, long)]
+        follow: bool,
+    },
+
+    /// Manage detection rules
+    Rules {
+        #[command(subcommand)]
+        action: RulesAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum RulesAction {
+    /// List loaded detection rules with pattern counts
+    List,
+
+    /// Test a string against the detection pipeline
+    Test {
+        /// The text to test against all detectors
+        input: String,
+    },
+}

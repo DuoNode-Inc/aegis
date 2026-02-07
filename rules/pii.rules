@@ -1,0 +1,58 @@
+# Aegis PII Detection Patterns
+# Format: LABEL:regex (one per line)
+# Lines starting with # are comments. Empty lines ignored.
+
+# Social Security Numbers
+SSN:\b\d{3}-\d{2}-\d{4}\b
+SSN:\b\d{9}\b
+
+# Credit Cards
+CREDIT_CARD:\b4\d{3}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b
+CREDIT_CARD:\b5[1-5]\d{2}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b
+CREDIT_CARD:\b3[47]\d{1}[\s-]?\d{6}[\s-]?\d{5}\b
+
+# Contact info
+EMAIL:\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b
+PHONE:\b\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b
+
+# Cloud credentials
+AWS_KEY:\b(AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16}\b
+AWS_SECRET:\b[A-Za-z0-9/+=]{40}\b
+GITHUB_TOKEN:\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{36,255}\b
+PRIVATE_KEY:-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----
+
+# API keys (common patterns)
+OPENAI_KEY:\bsk-[a-zA-Z0-9]{20,}\b
+GENERIC_KEY:\b(key|token|secret|password)[-_]?[=:]\s*['"]?[A-Za-z0-9/+=_-]{20,}['"]?\b
+
+# Ethereum private key (64 hex chars, often 0x prefixed)
+ETH_PRIVATE_KEY:\b0x[a-fA-F0-9]{64}\b
+ETH_PRIVATE_KEY_RAW:\b[a-fA-F0-9]{64}\b
+
+# Ethereum address
+ETH_ADDRESS:\b0x[a-fA-F0-9]{40}\b
+
+# Solana private key (base58, 87-88 chars)
+SOL_PRIVATE_KEY:\b[1-9A-HJ-NP-Za-km-z]{87,88}\b
+
+# Solana public key / address (base58, 32-44 chars)
+SOL_ADDRESS:\b[1-9A-HJ-NP-Za-km-z]{32,44}\b
+
+# Bitcoin private key WIF format (starts with 5, K, or L)
+BTC_WIF_KEY:\b[5KL][1-9A-HJ-NP-Za-km-z]{50,51}\b
+
+# Bitcoin address (legacy and bech32)
+BTC_ADDRESS:\b[13][a-km-zA-HJ-NP-Z1-9]{25,34}\b
+BTC_BECH32:\bbc1[a-zA-HJ-NP-Z0-9]{25,90}\b
+
+# BIP-39 mnemonic seed phrase candidate (12+ lowercase words)
+SEED_PHRASE_CANDIDATE:\b([a-z]{3,8}\s){11,23}[a-z]{3,8}\b
+
+# Keystore / JSON wallet file content
+KEYSTORE_JSON:"crypto"\s*:\s*\{.*"cipher"
+KEYSTORE_JSON:"version"\s*:\s*3.*"crypto"
+
+# Crypto service API keys
+INFURA_KEY:\b[a-f0-9]{32}\b
+ALCHEMY_KEY:\b[A-Za-z0-9_-]{32,}\b
+ETHERSCAN_KEY:\b[A-Z0-9]{34}\b

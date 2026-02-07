@@ -1,0 +1,62 @@
+# Aegis Shield Preview v0.1.0 — Configuration
+# Copy to aegis.toml and customize as needed.
+
+[proxy]
+# Bind address for the proxy listener
+host = "127.0.0.1"
+# Port to listen on
+port = 8080
+# Proxy mode: "gateway" (reverse proxy, default) or "proxy" (forward/HTTP_PROXY)
+mode = "gateway"
+
+[detection]
+# Default action when a threat is detected: "block" | "flag" | "log"
+default_action = "block"
+# Minimum confidence to trigger the default action (0.0 - 1.0)
+confidence_threshold = 0.8
+
+[detection.injection]
+# Enable Aho-Corasick injection pattern scanning
+enabled = true
+# Path to injection patterns file (one pattern per line)
+rules_path = "rules/injection.rules"
+
+[detection.pii]
+# Enable regex-based PII detection
+enabled = true
+# Path to PII patterns file (LABEL:regex format)
+rules_path = "rules/pii.rules"
+# Override default_action for PII detections (optional)
+# action = "block"
+
+[detection.entropy]
+# Enable Shannon entropy analysis on response bodies
+enabled = true
+# Entropy threshold in bits/byte (text ~4.0, base64 ~5.5, encrypted ~7.5)
+threshold = 5.5
+# Minimum byte length to trigger entropy analysis
+min_length = 100
+
+[logging]
+# Log format: "json" (structured, default) or "pretty" (human-readable)
+format = "json"
+# Log level: "trace" | "debug" | "info" | "warn" | "error"
+level = "info"
+# Log output: "stdout" (default)
+output = "stdout"
+
+[endpoints]
+# AI API endpoints to intercept and scan.
+# Non-matching traffic is passed through without inspection.
+targets = [
+    "api.openai.com",
+    "api.anthropic.com",
+    "generativelanguage.googleapis.com",
+    "api.cohere.com",
+    "api.mistral.ai",
+    "api.groq.com",
+    "api.together.xyz",
+    "api.fireworks.ai",
+    "api.perplexity.ai",
+    "api.deepseek.com",
+]

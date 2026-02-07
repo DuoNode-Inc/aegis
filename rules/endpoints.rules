@@ -1,0 +1,14 @@
+# Aegis AI Endpoint Recognition
+# AI API hostnames to intercept and scan. One per line.
+# Lines starting with # are comments. Empty lines ignored.
+
+api.openai.com
+api.anthropic.com
+generativelanguage.googleapis.com
+api.cohere.com
+api.mistral.ai
+api.groq.com
+api.together.xyz
+api.fireworks.ai
+api.perplexity.ai
+api.deepseek.com
