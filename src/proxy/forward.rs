@@ -1,6 +1,6 @@
 //! Traditional HTTP forward proxy mode (CONNECT tunneling).
 //!
-//! When configured as HTTP_PROXY/HTTPS_PROXY, Aegis receives:
+//! When configured as HTTP_PROXY/HTTPS_PROXY, Aiegis receives:
 //! - CONNECT requests for HTTPS destinations → tunnel bytes, log AI endpoints
 //! - Plain HTTP requests → inspect body, run detection pipeline, forward
 //!
@@ -24,10 +24,10 @@ use serde_json::json;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
 
-use crate::config::AegisConfig;
+use crate::config::AiegisConfig;
 use crate::detection::pipeline::Pipeline;
 use crate::endpoints::EndpointMatcher;
-use crate::logging::event::AegisEvent;
+use crate::logging::event::AiegisEvent;
 use crate::proxy::handler;
 
 type HttpClient = hyper_util::client::legacy::Client<
@@ -42,19 +42,19 @@ struct ForwardState {
     client: HttpClient,
     max_body_size: usize,
     tunnel_timeout: Duration,
+    tls_mitm_enabled: bool,
     semaphore: Arc<Semaphore>,
 }
 
 /// Start the forward proxy.
-pub async fn run(config: AegisConfig, pipeline: Pipeline) -> Result<()> {
+pub async fn run(config: AiegisConfig, pipeline: Pipeline) -> Result<()> {
     let addr: SocketAddr = format!("{}:{}", config.proxy.host, config.proxy.port).parse()?;
     let endpoints = EndpointMatcher::new(&config.endpoints.targets);
     let semaphore = Arc::new(Semaphore::new(config.proxy.max_connections));
 
     let connector = hyper_util::client::legacy::connect::HttpConnector::new();
-    let client =
-        hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
-            .build(connector);
+    let client = hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+        .build(connector);
 
     let state = Arc::new(ForwardState {
         pipeline,
@@ -62,6 +62,7 @@ pub async fn run(config: AegisConfig, pipeline: Pipeline) -> Result<()> {
         client,
         max_body_size: config.proxy.max_body_size,
         tunnel_timeout: Duration::from_secs(config.proxy.tunnel_timeout_secs),
+        tls_mitm_enabled: config.proxy.tls_mitm.enabled,
         semaphore,
     });
 
@@ -152,8 +153,16 @@ fn handle_connect(
     let host = target.split(':').next().unwrap_or("unknown");
     let is_ai = state.endpoints.is_ai_endpoint(host);
 
+    if state.tls_mitm_enabled {
+        tracing::debug!(
+            source = %source,
+            destination = %target,
+            "TLS MITM mode enabled: CONNECT interception currently runs in passthrough preview mode"
+        );
+    }
+
     if is_ai {
-        let event = AegisEvent {
+        let event = AiegisEvent {
             timestamp: chrono::Utc::now().to_rfc3339(),
             event_type: "connect".into(),
             action: "pass".into(),
@@ -236,12 +245,15 @@ async fn handle_plain_http(
     let path = uri.path().to_string();
 
     // Buffer body with size limit
-    let body_bytes = match Limited::new(req.into_body(), state.max_body_size).collect().await {
+    let body_bytes = match Limited::new(req.into_body(), state.max_body_size)
+        .collect()
+        .await
+    {
         Ok(collected) => collected.to_bytes(),
         Err(_) => {
             return Ok(json_error(
                 413,
-                "aegis_body_too_large",
+                "aiegis_body_too_large",
                 "Request body exceeds maximum allowed size",
             ));
         }
@@ -277,7 +289,7 @@ async fn handle_plain_http(
             tracing::error!(error = %err, "Failed to build upstream request");
             return Ok(json_error(
                 502,
-                "aegis_internal",
+                "aiegis_internal",
                 "Failed to build upstream request",
             ));
         }
@@ -288,12 +300,15 @@ async fn handle_plain_http(
             let status = resp.status();
             let resp_headers = resp.headers().clone();
 
-            let resp_body = match Limited::new(resp.into_body(), state.max_body_size).collect().await {
+            let resp_body = match Limited::new(resp.into_body(), state.max_body_size)
+                .collect()
+                .await
+            {
                 Ok(collected) => collected.to_bytes(),
                 Err(_) => {
                     return Ok(json_error(
                         502,
-                        "aegis_upstream_error",
+                        "aiegis_upstream_error",
                         "Upstream response exceeds maximum allowed size",
                     ));
                 }
@@ -318,7 +333,7 @@ async fn handle_plain_http(
         }
         Err(err) => {
             tracing::error!(error = %err, "Forward proxy upstream request failed");
-            Ok(json_error(502, "aegis_upstream_error", &err.to_string()))
+            Ok(json_error(502, "aiegis_upstream_error", &err.to_string()))
         }
     }
 }

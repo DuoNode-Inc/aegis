@@ -1,14 +1,19 @@
-//! Configuration loading for Aegis.
+//! Configuration loading for Aiegis.
 //!
-//! Loads from aegis.toml, merges CLI overrides, and falls back to sane defaults.
-//! Config search order: --config flag > ./aegis.toml > ~/.aegis/aegis.toml
+//! Loads from aiegis.toml, merges CLI overrides, and falls back to sane defaults.
+//! Config search order: --config flag > ./aiegis.toml > ~/.aiegis/aiegis.toml
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
+pub const DEFAULT_INJECTION_RULES_PATH: &str = "rules/injection.rules";
+pub const DEFAULT_PII_RULES_PATH: &str = "rules/pii.rules";
+
 #[derive(Debug, Deserialize, Clone, Default)]
-pub struct AegisConfig {
+pub struct AiegisConfig {
+    #[serde(default)]
+    pub runtime: RuntimeConfig,
     #[serde(default)]
     pub proxy: ProxyConfig,
     #[serde(default)]
@@ -17,6 +22,13 @@ pub struct AegisConfig {
     pub logging: LoggingConfig,
     #[serde(default)]
     pub endpoints: EndpointsConfig,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct RuntimeConfig {
+    /// Optional explicit tier override. If omitted, tier defaults by runtime mode.
+    #[serde(default)]
+    pub tier: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -33,6 +45,8 @@ pub struct ProxyConfig {
     pub max_connections: usize,
     #[serde(default = "default_tunnel_timeout_secs")]
     pub tunnel_timeout_secs: u64,
+    #[serde(default)]
+    pub tls_mitm: TlsMitmConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -48,6 +62,8 @@ pub struct DetectionConfig {
     pub pii: PiiConfig,
     #[serde(default)]
     pub entropy: EntropyConfig,
+    #[serde(default)]
+    pub classifier: ClassifierConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -77,6 +93,30 @@ pub struct EntropyConfig {
     pub threshold: f64,
     #[serde(default = "default_min_length")]
     pub min_length: usize,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct TlsMitmConfig {
+    #[serde(default = "default_false")]
+    pub enabled: bool,
+    #[serde(default = "default_tls_ca_dir")]
+    pub ca_dir: PathBuf,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ClassifierConfig {
+    #[serde(default = "default_false")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub package: Option<String>,
+    #[serde(default = "default_classifier_use_package_defaults")]
+    pub use_package_defaults: bool,
+    #[serde(default = "default_classifier_model_path")]
+    pub model_path: PathBuf,
+    #[serde(default = "default_classifier_tokenizer_path")]
+    pub tokenizer_path: PathBuf,
+    #[serde(default = "default_classifier_confidence_threshold")]
+    pub confidence_threshold: f64,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -112,8 +152,17 @@ fn default_action() -> String {
 fn default_confidence() -> f64 {
     0.8
 }
+fn default_classifier_confidence_threshold() -> f64 {
+    0.85
+}
+fn default_classifier_use_package_defaults() -> bool {
+    true
+}
 fn default_true() -> bool {
     true
+}
+fn default_false() -> bool {
+    false
 }
 fn default_entropy_threshold() -> f64 {
     5.5
@@ -139,11 +188,20 @@ fn default_max_connections() -> usize {
 fn default_tunnel_timeout_secs() -> u64 {
     300 // 5 minutes idle timeout
 }
+fn default_tls_ca_dir() -> PathBuf {
+    PathBuf::from(".aiegis/ca")
+}
 fn default_injection_rules_path() -> PathBuf {
-    PathBuf::from("rules/injection.rules")
+    PathBuf::from(DEFAULT_INJECTION_RULES_PATH)
 }
 fn default_pii_rules_path() -> PathBuf {
-    PathBuf::from("rules/pii.rules")
+    PathBuf::from(DEFAULT_PII_RULES_PATH)
+}
+fn default_classifier_model_path() -> PathBuf {
+    PathBuf::from("models/neural-shield.onnx")
+}
+fn default_classifier_tokenizer_path() -> PathBuf {
+    PathBuf::from("models/neural-shield-tokenizer.json")
 }
 
 fn default_endpoints() -> Vec<String> {
@@ -170,6 +228,7 @@ impl Default for ProxyConfig {
             max_body_size: default_max_body_size(),
             max_connections: default_max_connections(),
             tunnel_timeout_secs: default_tunnel_timeout_secs(),
+            tls_mitm: TlsMitmConfig::default(),
         }
     }
 }
@@ -182,6 +241,7 @@ impl Default for DetectionConfig {
             injection: InjectionConfig::default(),
             pii: PiiConfig::default(),
             entropy: EntropyConfig::default(),
+            classifier: ClassifierConfig::default(),
         }
     }
 }
@@ -215,6 +275,28 @@ impl Default for EntropyConfig {
     }
 }
 
+impl Default for TlsMitmConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_false(),
+            ca_dir: default_tls_ca_dir(),
+        }
+    }
+}
+
+impl Default for ClassifierConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_false(),
+            package: None,
+            use_package_defaults: default_classifier_use_package_defaults(),
+            model_path: default_classifier_model_path(),
+            tokenizer_path: default_classifier_tokenizer_path(),
+            confidence_threshold: default_classifier_confidence_threshold(),
+        }
+    }
+}
+
 impl Default for LoggingConfig {
     fn default() -> Self {
         Self {
@@ -222,6 +304,14 @@ impl Default for LoggingConfig {
             level: default_log_level(),
             output: default_log_output(),
         }
+    }
+}
+
+impl AiegisConfig {
+    /// Whether non-default detector rule file paths are configured.
+    pub fn uses_custom_pattern_paths(&self) -> bool {
+        self.detection.injection.rules_path != Path::new(DEFAULT_INJECTION_RULES_PATH)
+            || self.detection.pii.rules_path != Path::new(DEFAULT_PII_RULES_PATH)
     }
 }
 
@@ -234,41 +324,41 @@ impl Default for EndpointsConfig {
 }
 
 /// Load config from file, falling back to defaults if no file is found.
-pub fn load_config(path: Option<&Path>) -> Result<AegisConfig> {
+pub fn load_config(path: Option<&Path>) -> Result<AiegisConfig> {
     // Explicit path provided
     if let Some(p) = path {
         let contents = std::fs::read_to_string(p)
             .with_context(|| format!("Failed to read config file: {}", p.display()))?;
-        let config: AegisConfig = toml::from_str(&contents)
+        let config: AiegisConfig = toml::from_str(&contents)
             .with_context(|| format!("Failed to parse config file: {}", p.display()))?;
         return Ok(config);
     }
 
     // Search default locations
     let search_paths = [
-        PathBuf::from("aegis.toml"),
-        dirs_or_home().join("aegis.toml"),
+        PathBuf::from("aiegis.toml"),
+        dirs_or_home().join("aiegis.toml"),
     ];
 
     for p in &search_paths {
         if p.exists() {
             let contents = std::fs::read_to_string(p)
                 .with_context(|| format!("Failed to read config file: {}", p.display()))?;
-            let config: AegisConfig = toml::from_str(&contents)
+            let config: AiegisConfig = toml::from_str(&contents)
                 .with_context(|| format!("Failed to parse config file: {}", p.display()))?;
             return Ok(config);
         }
     }
 
     // No config file found — use defaults
-    Ok(AegisConfig::default())
+    Ok(AiegisConfig::default())
 }
 
 fn dirs_or_home() -> PathBuf {
     if let Some(home) = std::env::var_os("HOME") {
-        PathBuf::from(home).join(".aegis")
+        PathBuf::from(home).join(".aiegis")
     } else {
-        PathBuf::from(".aegis")
+        PathBuf::from(".aiegis")
     }
 }
 
@@ -276,20 +366,36 @@ fn dirs_or_home() -> PathBuf {
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::path::PathBuf;
 
     #[test]
     fn default_config_values() {
-        let config = AegisConfig::default();
+        let config = AiegisConfig::default();
+        assert!(config.runtime.tier.is_none());
         assert_eq!(config.proxy.host, "127.0.0.1");
         assert_eq!(config.proxy.port, 8080);
         assert_eq!(config.proxy.mode, "gateway");
         assert_eq!(config.proxy.max_body_size, 10 * 1024 * 1024);
         assert_eq!(config.proxy.max_connections, 1024);
         assert_eq!(config.proxy.tunnel_timeout_secs, 300);
+        assert!(!config.proxy.tls_mitm.enabled);
+        assert_eq!(config.proxy.tls_mitm.ca_dir, PathBuf::from(".aiegis/ca"));
         assert_eq!(config.detection.default_action, "block");
         assert!(config.detection.injection.enabled);
         assert!(config.detection.pii.enabled);
         assert!(config.detection.entropy.enabled);
+        assert!(!config.detection.classifier.enabled);
+        assert_eq!(config.detection.classifier.package, None);
+        assert!(config.detection.classifier.use_package_defaults);
+        assert_eq!(
+            config.detection.classifier.model_path,
+            PathBuf::from("models/neural-shield.onnx")
+        );
+        assert_eq!(
+            config.detection.classifier.tokenizer_path,
+            PathBuf::from("models/neural-shield-tokenizer.json")
+        );
+        assert_eq!(config.detection.classifier.confidence_threshold, 0.85);
         assert_eq!(config.detection.entropy.threshold, 5.5);
         assert_eq!(config.detection.entropy.min_length, 100);
         assert_eq!(config.logging.format, "json");
@@ -299,7 +405,7 @@ mod tests {
 
     #[test]
     fn default_endpoints_include_major_providers() {
-        let config = AegisConfig::default();
+        let config = AiegisConfig::default();
         let targets = &config.endpoints.targets;
         assert!(targets.contains(&"api.openai.com".to_string()));
         assert!(targets.contains(&"api.anthropic.com".to_string()));
@@ -312,7 +418,7 @@ mod tests {
 [proxy]
 port = 9090
 "#;
-        let config: AegisConfig = toml::from_str(toml_str).unwrap();
+        let config: AiegisConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.proxy.port, 9090);
         // Everything else should be defaults
         assert_eq!(config.proxy.host, "127.0.0.1");
@@ -320,8 +426,80 @@ port = 9090
     }
 
     #[test]
+    fn parse_v01_toml_without_new_sections() {
+        let toml_str = r#"
+[proxy]
+host = "127.0.0.1"
+port = 8080
+mode = "gateway"
+
+[detection]
+default_action = "block"
+confidence_threshold = 0.8
+
+[detection.injection]
+enabled = true
+rules_path = "rules/injection.rules"
+
+[detection.pii]
+enabled = true
+rules_path = "rules/pii.rules"
+
+[detection.entropy]
+enabled = true
+threshold = 5.5
+min_length = 100
+
+[logging]
+format = "json"
+level = "info"
+output = "stdout"
+"#;
+
+        let config: AiegisConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.runtime.tier.is_none());
+        assert!(!config.proxy.tls_mitm.enabled);
+        assert!(!config.detection.classifier.enabled);
+        assert_eq!(config.detection.classifier.package, None);
+        assert!(config.detection.classifier.use_package_defaults);
+        assert_eq!(
+            config.detection.classifier.tokenizer_path,
+            PathBuf::from("models/neural-shield-tokenizer.json")
+        );
+    }
+
+    #[test]
+    fn parse_classifier_package_fields() {
+        let toml_str = r#"
+[detection.classifier]
+enabled = true
+package = "meta_llama_guard_4_12b_int8"
+use_package_defaults = false
+model_path = "models/custom/model.onnx"
+tokenizer_path = "models/custom/tokenizer.json"
+confidence_threshold = 0.92
+"#;
+
+        let config: AiegisConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.detection.classifier.enabled);
+        assert_eq!(
+            config.detection.classifier.package.as_deref(),
+            Some("meta_llama_guard_4_12b_int8")
+        );
+        assert!(!config.detection.classifier.use_package_defaults);
+        assert_eq!(
+            config.detection.classifier.model_path,
+            PathBuf::from("models/custom/model.onnx")
+        );
+        assert_eq!(config.detection.classifier.confidence_threshold, 0.92);
+    }
+
+    #[test]
     fn parse_full_toml() {
         let toml_str = r#"
+[runtime]
+tier = "developer"
+
 [proxy]
 host = "0.0.0.0"
 port = 3000
@@ -329,6 +507,10 @@ mode = "proxy"
 max_body_size = 5242880
 max_connections = 512
 tunnel_timeout_secs = 120
+
+[proxy.tls_mitm]
+enabled = true
+ca_dir = ".aiegis/dev-ca"
 
 [detection]
 default_action = "flag"
@@ -340,6 +522,14 @@ enabled = false
 threshold = 4.0
 min_length = 50
 
+[detection.classifier]
+enabled = true
+package = "meta_prompt_guard_86m"
+use_package_defaults = true
+model_path = "models/dev.onnx"
+tokenizer_path = "models/dev-tokenizer.json"
+confidence_threshold = 0.91
+
 [logging]
 format = "pretty"
 level = "debug"
@@ -347,32 +537,53 @@ level = "debug"
 [endpoints]
 targets = ["api.openai.com"]
 "#;
-        let config: AegisConfig = toml::from_str(toml_str).unwrap();
+        let config: AiegisConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.proxy.host, "0.0.0.0");
         assert_eq!(config.proxy.port, 3000);
         assert_eq!(config.proxy.mode, "proxy");
         assert_eq!(config.proxy.max_body_size, 5242880);
         assert_eq!(config.proxy.max_connections, 512);
         assert_eq!(config.proxy.tunnel_timeout_secs, 120);
+        assert!(config.proxy.tls_mitm.enabled);
+        assert_eq!(
+            config.proxy.tls_mitm.ca_dir,
+            PathBuf::from(".aiegis/dev-ca")
+        );
         assert_eq!(config.detection.default_action, "flag");
         assert!(!config.detection.injection.enabled);
         assert_eq!(config.detection.entropy.threshold, 4.0);
         assert_eq!(config.detection.entropy.min_length, 50);
+        assert!(config.detection.classifier.enabled);
+        assert_eq!(
+            config.detection.classifier.package.as_deref(),
+            Some("meta_prompt_guard_86m")
+        );
+        assert!(config.detection.classifier.use_package_defaults);
+        assert_eq!(
+            config.detection.classifier.model_path,
+            PathBuf::from("models/dev.onnx")
+        );
+        assert_eq!(
+            config.detection.classifier.tokenizer_path,
+            PathBuf::from("models/dev-tokenizer.json")
+        );
+        assert_eq!(config.detection.classifier.confidence_threshold, 0.91);
         assert_eq!(config.logging.format, "pretty");
         assert_eq!(config.endpoints.targets.len(), 1);
+        assert_eq!(config.runtime.tier.as_deref(), Some("developer"));
     }
 
     #[test]
     fn invalid_toml_returns_error() {
         let bad = "this is not [valid toml";
-        let result: Result<AegisConfig, _> = toml::from_str(bad);
+        let result: Result<AiegisConfig, _> = toml::from_str(bad);
         assert!(result.is_err());
     }
 
     #[test]
     fn load_config_missing_file_uses_defaults() {
         // load_config with a non-existent explicit path should error
-        let result = load_config(Some(Path::new("/nonexistent/aegis.toml")));
+        let result = load_config(Some(Path::new("/nonexistent/aiegis.toml")));
         assert!(result.is_err());
     }
 
@@ -386,14 +597,14 @@ targets = ["api.openai.com"]
 
     #[test]
     fn apply_overrides_mode() {
-        let config = AegisConfig::default();
+        let config = AiegisConfig::default();
         let config = apply_overrides(config, Some("proxy"), None, None);
         assert_eq!(config.proxy.mode, "proxy");
     }
 
     #[test]
     fn apply_overrides_host_and_port() {
-        let config = AegisConfig::default();
+        let config = AiegisConfig::default();
         let config = apply_overrides(config, None, Some("0.0.0.0"), Some(9999));
         assert_eq!(config.proxy.host, "0.0.0.0");
         assert_eq!(config.proxy.port, 9999);
@@ -401,21 +612,30 @@ targets = ["api.openai.com"]
 
     #[test]
     fn apply_overrides_none_preserves_defaults() {
-        let config = AegisConfig::default();
+        let config = AiegisConfig::default();
         let config = apply_overrides(config, None, None, None);
         assert_eq!(config.proxy.host, "127.0.0.1");
         assert_eq!(config.proxy.port, 8080);
         assert_eq!(config.proxy.mode, "gateway");
     }
+
+    #[test]
+    fn custom_pattern_paths_detection() {
+        let mut config = AiegisConfig::default();
+        assert!(!config.uses_custom_pattern_paths());
+
+        config.detection.injection.rules_path = PathBuf::from("rules/custom.rules");
+        assert!(config.uses_custom_pattern_paths());
+    }
 }
 
 /// Apply CLI overrides on top of loaded config.
 pub fn apply_overrides(
-    mut config: AegisConfig,
+    mut config: AiegisConfig,
     mode: Option<&str>,
     host: Option<&str>,
     port: Option<u16>,
-) -> AegisConfig {
+) -> AiegisConfig {
     if let Some(m) = mode {
         config.proxy.mode = m.to_string();
     }

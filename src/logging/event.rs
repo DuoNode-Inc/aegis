@@ -1,17 +1,17 @@
-//! AegisEvent struct for structured log serialization.
+//! AiegisEvent struct for structured log serialization.
 //!
-//! Every proxy request generates an AegisEvent that is serialized to JSON
+//! Every proxy request generates an AiegisEvent that is serialized to JSON
 //! via the tracing-subscriber JSON layer.
 
 use serde::Serialize;
 
-/// Structured event for every request processed by Aegis.
+/// Structured event for every request processed by Aiegis.
 #[derive(Debug, Serialize)]
-pub struct AegisEvent {
+pub struct AiegisEvent {
     pub timestamp: String,
     /// "request" | "response" | "system"
     pub event_type: String,
-    /// "pass" | "block" | "flag"
+    /// "pass" | "block" | "flag" | "ambiguous"
     pub action: String,
     pub source: String,
     pub destination: String,
@@ -24,14 +24,15 @@ pub struct AegisEvent {
     pub request_size: Option<usize>,
 }
 
-impl AegisEvent {
+impl AiegisEvent {
     /// Emit this event via tracing at the appropriate level.
     pub fn emit(&self) {
         let json = serde_json::to_string(self).unwrap_or_default();
         match self.action.as_str() {
-            "block" => tracing::warn!(aegis_event = %json, "request blocked"),
-            "flag" => tracing::info!(aegis_event = %json, "request flagged"),
-            _ => tracing::info!(aegis_event = %json, "request passed"),
+            "block" => tracing::warn!(aiegis_event = %json, "request blocked"),
+            "flag" => tracing::info!(aiegis_event = %json, "request flagged"),
+            "ambiguous" => tracing::info!(aiegis_event = %json, "request ambiguous"),
+            _ => tracing::info!(aiegis_event = %json, "request passed"),
         }
     }
 

@@ -1,7 +1,7 @@
 //! Structured logging setup with tracing-subscriber.
 //!
-//! Dual output: stdout for interactive use, `~/.aegis/aegis.log` for
-//! the `aegis logs` command to read.
+//! Dual output: stdout for interactive use, `~/.aiegis/aiegis.log` for
+//! the `aiegis logs` command to read.
 
 pub mod event;
 

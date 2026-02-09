@@ -1,4 +1,4 @@
-//! CLI subcommand definitions for Aegis.
+//! CLI subcommand definitions for Aiegis.
 //!
 //! All user-facing commands are defined here using clap derive macros.
 //! The actual implementation logic lives in the respective modules.
@@ -8,16 +8,16 @@ use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(
-    name = "aegis",
+    name = "aiegis",
     version,
     about = "AI security firewall proxy — local, fast, no cloud",
-    long_about = "Aegis intercepts traffic between your applications and AI API endpoints.\n\
+    long_about = "Aiegis intercepts traffic between your applications and AI API endpoints.\n\
                   It scans prompts and responses for prompt injection, PII leakage,\n\
                   credential exposure, and encoded data exfiltration.\n\
                   All classification runs on-device. Nothing leaves the machine."
 )]
 pub struct Cli {
-    /// Path to aegis.toml config file
+    /// Path to aiegis.toml config file
     #[arg(short, long, global = true)]
     pub config: Option<PathBuf>,
 
@@ -27,7 +27,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Start the Aegis proxy
+    /// Start the Aiegis proxy
     Start {
         /// Proxy mode: "gateway" (reverse proxy) or "proxy" (forward/HTTP_PROXY)
         #[arg(short, long, default_value = "gateway")]
@@ -42,13 +42,13 @@ pub enum Command {
         port: Option<u16>,
     },
 
-    /// Stop the running Aegis proxy
+    /// Stop the running Aiegis proxy
     Stop,
 
-    /// Show Aegis proxy status
+    /// Show Aiegis proxy status
     Status,
 
-    /// View Aegis logs
+    /// View Aiegis logs
     Logs {
         /// Number of recent log lines to show
         #[arg(short = 'n', long, default_value = "20")]

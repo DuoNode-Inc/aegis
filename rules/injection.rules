@@ -1,4 +1,4 @@
-# Aegis Injection Detection Patterns
+# Aiegis Injection Detection Patterns
 # One pattern per line. Case-insensitive matching via Aho-Corasick.
 # Lines starting with # are comments. Empty lines ignored.
 
@@ -64,7 +64,7 @@ turn off content filter
 no restrictions mode
 unrestricted mode
 
-# Token injection (model-specific control tokens, from REALM_NET_AEGIS)
+# Token injection (model-specific control tokens, from REALM_NET_AIEGIS)
 [SYSTEM]
 [INST]
 <|im_start|>

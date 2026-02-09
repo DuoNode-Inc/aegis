@@ -1,5 +1,11 @@
-# Aegis Shield Preview v0.1.0 — Configuration
-# Copy to aegis.toml and customize as needed.
+# Aiegis Shield Preview v0.1.0 — Configuration
+# Copy to aiegis.toml and customize as needed.
+
+[runtime]
+# Optional pricing tier override:
+# "shield" (default in standalone), "developer", "sentinel"
+# In Realm OS mode, default tier is "sentinel".
+# tier = "shield"
 
 [proxy]
 # Bind address for the proxy listener
@@ -8,6 +14,12 @@ host = "127.0.0.1"
 port = 8080
 # Proxy mode: "gateway" (reverse proxy, default) or "proxy" (forward/HTTP_PROXY)
 mode = "gateway"
+
+[proxy.tls_mitm]
+# Enable TLS transparent proxy (Developer+ tier)
+enabled = false
+# Directory for generated CA cert/key and cert cache metadata
+ca_dir = ".aiegis/ca"
 
 [detection]
 # Default action when a threat is detected: "block" | "flag" | "log"
@@ -36,6 +48,24 @@ enabled = true
 threshold = 5.5
 # Minimum byte length to trigger entropy analysis
 min_length = 100
+
+[detection.classifier]
+# Enable neural classifier on AMBIGUOUS verdicts (Developer+ tier)
+enabled = false
+# Optional packaged model profile:
+# "meta_prompt_guard_22m" | "meta_prompt_guard_86m" |
+# "meta_llama_guard_4_12b_int8" |
+# "nvidia_nemotron_70b_guard_adapter" |
+# "deepseek_r1_distill_70b_guard_adapter"
+# package = "meta_prompt_guard_86m"
+# If true, package defaults override model/tokenizer path + threshold.
+use_package_defaults = true
+# Path to ONNX classifier model
+model_path = "models/neural-shield.onnx"
+# Path to tokenizer JSON used by the classifier model
+tokenizer_path = "models/neural-shield-tokenizer.json"
+# Confidence threshold for classifier actions
+confidence_threshold = 0.85
 
 [logging]
 # Log format: "json" (structured, default) or "pretty" (human-readable)

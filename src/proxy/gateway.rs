@@ -1,7 +1,7 @@
 //! Reverse proxy mode — routes by path prefix to upstream AI APIs.
 //!
 //! The default mode. User points their SDK base URL at localhost:8080/openai
-//! and Aegis forwards to api.openai.com, scanning all traffic through the
+//! and Aiegis forwards to api.openai.com, scanning all traffic through the
 //! detection pipeline.
 
 use std::convert::Infallible;
@@ -21,7 +21,7 @@ use serde_json::json;
 use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
 
-use crate::config::AegisConfig;
+use crate::config::AiegisConfig;
 use crate::detection::pipeline::Pipeline;
 use crate::endpoints::EndpointMatcher;
 use crate::proxy::handler;
@@ -58,7 +58,7 @@ fn build_https_client() -> Result<HttpsClient> {
 }
 
 /// Start the gateway reverse proxy.
-pub async fn run(config: AegisConfig, pipeline: Pipeline) -> Result<()> {
+pub async fn run(config: AiegisConfig, pipeline: Pipeline) -> Result<()> {
     let addr: SocketAddr = format!("{}:{}", config.proxy.host, config.proxy.port).parse()?;
     let endpoints = EndpointMatcher::new(&config.endpoints.targets);
     let client = build_https_client()?;
@@ -141,16 +141,23 @@ async fn handle_request(
 
     // Match the path to a gateway route
     let Some((upstream_url, stripped_path)) = state.endpoints.match_route(&path) else {
-        return Ok(json_error(404, "aegis_no_route", "No matching AI provider route"));
+        return Ok(json_error(
+            404,
+            "aiegis_no_route",
+            "No matching AI provider route",
+        ));
     };
 
     // Buffer the request body with size limit
-    let body_bytes = match Limited::new(req.into_body(), state.max_body_size).collect().await {
+    let body_bytes = match Limited::new(req.into_body(), state.max_body_size)
+        .collect()
+        .await
+    {
         Ok(collected) => collected.to_bytes(),
         Err(_) => {
             return Ok(json_error(
                 413,
-                "aegis_body_too_large",
+                "aiegis_body_too_large",
                 "Request body exceeds maximum allowed size",
             ));
         }
@@ -198,7 +205,7 @@ async fn handle_request(
             tracing::error!(error = %err, "Failed to build upstream request");
             return Ok(json_error(
                 500,
-                "aegis_internal",
+                "aiegis_internal",
                 "Failed to build upstream request",
             ));
         }
@@ -211,12 +218,15 @@ async fn handle_request(
             let resp_headers = resp.headers().clone();
 
             // Buffer response with size limit
-            let resp_body = match Limited::new(resp.into_body(), state.max_body_size).collect().await {
+            let resp_body = match Limited::new(resp.into_body(), state.max_body_size)
+                .collect()
+                .await
+            {
                 Ok(collected) => collected.to_bytes(),
                 Err(_) => {
                     return Ok(json_error(
                         502,
-                        "aegis_upstream_error",
+                        "aiegis_upstream_error",
                         "Upstream response exceeds maximum allowed size",
                     ));
                 }
@@ -241,7 +251,7 @@ async fn handle_request(
         }
         Err(err) => {
             tracing::error!(error = %err, upstream = %upstream_url, "Upstream request failed");
-            Ok(json_error(502, "aegis_upstream_error", &err.to_string()))
+            Ok(json_error(502, "aiegis_upstream_error", &err.to_string()))
         }
     }
 }

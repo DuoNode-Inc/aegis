@@ -1,4 +1,4 @@
-# Aegis PII Detection Patterns
+# Aiegis PII Detection Patterns
 # Format: LABEL:regex (one per line)
 # Lines starting with # are comments. Empty lines ignored.
 

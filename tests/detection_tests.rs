@@ -6,7 +6,7 @@
 use std::path::Path;
 
 // Re-use the library's internal types via the binary crate.
-// Since aegis is a binary crate, we test detection through the CLI or
+// Since aiegis is a binary crate, we test detection through the CLI or
 // by duplicating the pipeline construction logic here.
 
 mod helpers {
@@ -84,7 +84,9 @@ fn web3_addresses_file_exists() {
 fn injection_patterns_contain_instruction_overrides() {
     let patterns = helpers::load_injection_patterns();
     let lower: Vec<String> = patterns.iter().map(|p| p.to_lowercase()).collect();
-    assert!(lower.iter().any(|p| p.contains("ignore previous instructions")));
+    assert!(lower
+        .iter()
+        .any(|p| p.contains("ignore previous instructions")));
     assert!(lower.iter().any(|p| p.contains("disregard")));
     assert!(lower.iter().any(|p| p.contains("forget your instructions")));
 }
@@ -102,8 +104,12 @@ fn injection_patterns_contain_jailbreaks() {
 fn injection_patterns_contain_system_prompt_extraction() {
     let patterns = helpers::load_injection_patterns();
     let lower: Vec<String> = patterns.iter().map(|p| p.to_lowercase()).collect();
-    assert!(lower.iter().any(|p| p.contains("reveal your system prompt")));
-    assert!(lower.iter().any(|p| p.contains("show me your system prompt")));
+    assert!(lower
+        .iter()
+        .any(|p| p.contains("reveal your system prompt")));
+    assert!(lower
+        .iter()
+        .any(|p| p.contains("show me your system prompt")));
 }
 
 #[test]
@@ -173,7 +179,10 @@ fn pii_rules_contain_standard_types() {
     let rules = helpers::load_pii_labels();
     let labels: Vec<&str> = rules.iter().map(|r| r.0.as_str()).collect();
     assert!(labels.contains(&"SSN"), "Missing SSN pattern");
-    assert!(labels.contains(&"CREDIT_CARD"), "Missing CREDIT_CARD pattern");
+    assert!(
+        labels.contains(&"CREDIT_CARD"),
+        "Missing CREDIT_CARD pattern"
+    );
     assert!(labels.contains(&"EMAIL"), "Missing EMAIL pattern");
     assert!(labels.contains(&"AWS_KEY"), "Missing AWS_KEY pattern");
 }
@@ -208,10 +217,7 @@ fn pii_rules_contain_crypto_types() {
 fn pii_rules_contain_crypto_service_keys() {
     let rules = helpers::load_pii_labels();
     let labels: Vec<&str> = rules.iter().map(|r| r.0.as_str()).collect();
-    assert!(
-        labels.contains(&"INFURA_KEY"),
-        "Missing INFURA_KEY pattern"
-    );
+    assert!(labels.contains(&"INFURA_KEY"), "Missing INFURA_KEY pattern");
     assert!(
         labels.contains(&"ALCHEMY_KEY"),
         "Missing ALCHEMY_KEY pattern"

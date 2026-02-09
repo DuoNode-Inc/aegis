@@ -1,17 +1,17 @@
 //! Runtime state management — PID file and data directory.
 //!
-//! Aegis writes a PID file when starting and removes it on clean shutdown.
-//! The data directory at `~/.aegis/` holds the PID file and log file.
+//! Aiegis writes a PID file when starting and removes it on clean shutdown.
+//! The data directory at `~/.aiegis/` holds the PID file and log file.
 
 use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 
-/// Get the Aegis data directory (`~/.aegis/`), creating it if needed.
+/// Get the Aiegis data directory (`~/.aiegis/`), creating it if needed.
 pub fn data_dir() -> Result<PathBuf> {
     let home = std::env::var("HOME").with_context(|| "HOME environment variable not set")?;
-    let dir = PathBuf::from(home).join(".aegis");
+    let dir = PathBuf::from(home).join(".aiegis");
     fs::create_dir_all(&dir)
         .with_context(|| format!("Failed to create data directory: {}", dir.display()))?;
     Ok(dir)
@@ -19,12 +19,12 @@ pub fn data_dir() -> Result<PathBuf> {
 
 /// Get the PID file path.
 pub fn pid_path() -> Result<PathBuf> {
-    Ok(data_dir()?.join("aegis.pid"))
+    Ok(data_dir()?.join("aiegis.pid"))
 }
 
 /// Get the log file path.
 pub fn log_path() -> Result<PathBuf> {
-    Ok(data_dir()?.join("aegis.log"))
+    Ok(data_dir()?.join("aiegis.log"))
 }
 
 /// Write the current process PID to the PID file.
