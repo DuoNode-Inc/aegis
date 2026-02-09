@@ -86,6 +86,14 @@ If the rules pipeline returns **AMBIGUOUS**, Developer builds can optionally run
 - **Gateway** (default): Reverse proxy. Point your SDK's base URL at `localhost:8080/<provider>`. Aiegis strips the prefix, scans the body, and forwards to the real API over TLS.
 - **Proxy**: Forward HTTP proxy. Set `HTTP_PROXY=http://localhost:8080`. HTTPS traffic is tunneled (CONNECT) unless built with TLS MITM support (`--features tls-mitm`).
 
+## Docker & Kubernetes (TODO)
+
+Runtime docs are planned for containerized deployments:
+
+- Docker: add a minimal `Dockerfile` for Shield and an optional Developer flavor; document config/rules mounts, port `8080` publishing, and running `aiegis start --mode gateway`.
+- Kubernetes: add manifests/Helm chart for sidecar (recommended) and shared-gateway modes; document CA persistence for TLS MITM (Secret + volume) and model-asset mounts for neural builds.
+- Transparent proxy mode (MITM/iptables): document any required privileges/capabilities and safer alternatives.
+
 ## Configuration
 
 Copy `aiegis.toml.example` to `aiegis.toml` or `~/.aiegis/aiegis.toml`. All settings have sane defaults — zero config required to get started.
