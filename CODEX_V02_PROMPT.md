@@ -92,6 +92,17 @@ Add an ONNX-based ML classifier that fires on AMBIGUOUS verdicts from the rules 
 - Docker runtime instructions (Shield + Developer builds)
 - Kubernetes runtime instructions (sidecar + gateway patterns)
 
+### Supporting Track (Private Ops, Not OSS)
+
+These items are required for shipping V0.2 responsibly, but they must **not** land in the public OSS repo as raw logs or model assets:
+
+- Adversarial prompt trainer + dataset generation (segmented private logs)
+- Model bootstrap/export/quantize + internal model package catalog
+- Internal release bundle builder (binaries + manifests + checksums)
+
+In the Realm monorepo, these live under the private ops track:
+- `aiegis-module-rs/` (scripts, logs, datasets, internal distributions)
+
 ## CLOSED-LOOP ITERATION CYCLE
 
 Execute this 8-step cycle for each feature group (A, B, C, D). The cycle has circuit breaker logic — if a step fails 3 times, STOP and escalate.
