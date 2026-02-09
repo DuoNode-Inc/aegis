@@ -27,23 +27,30 @@ pub struct CaArtifacts {
     pub key_path: PathBuf,
 }
 
-/// Ensure the local CA material exists on disk.
-pub fn ensure_ca(ca_dir: &Path) -> Result<CaArtifacts> {
+/// Create (or verify) the local CA material exists on disk.
+///
+/// If `force` is true, any existing CA files are replaced with a freshly generated CA.
+pub fn init_ca(ca_dir: &Path, force: bool) -> Result<CaArtifacts> {
     #[cfg(feature = "tls-mitm")]
     {
-        ensure_ca_impl(ca_dir)
+        init_ca_impl(ca_dir, force)
     }
     #[cfg(not(feature = "tls-mitm"))]
     {
-        let _ = ca_dir;
+        let _ = (ca_dir, force);
         Err(anyhow!(
-            "TLS MITM is enabled but this binary was built without the 'tls-mitm' feature. Rebuild with: cargo build --features tls-mitm"
+            "TLS MITM requires a build with the 'tls-mitm' feature. Rebuild with: cargo build --features tls-mitm"
         ))
     }
 }
 
+/// Ensure the local CA material exists on disk.
+pub fn ensure_ca(ca_dir: &Path) -> Result<CaArtifacts> {
+    init_ca(ca_dir, false)
+}
+
 #[cfg(feature = "tls-mitm")]
-fn ensure_ca_impl(ca_dir: &Path) -> Result<CaArtifacts> {
+fn init_ca_impl(ca_dir: &Path, force: bool) -> Result<CaArtifacts> {
     std::fs::create_dir_all(ca_dir)
         .with_context(|| format!("Failed to create CA directory: {}", ca_dir.display()))?;
 
@@ -55,7 +62,7 @@ fn ensure_ca_impl(ca_dir: &Path) -> Result<CaArtifacts> {
 
     let cert_path = ca_dir.join(CA_CERT_FILE);
     let key_path = ca_dir.join(CA_KEY_FILE);
-    if cert_path.exists() && key_path.exists() {
+    if !force && cert_path.exists() && key_path.exists() {
         return Ok(CaArtifacts {
             cert_path,
             key_path,
@@ -63,16 +70,32 @@ fn ensure_ca_impl(ca_dir: &Path) -> Result<CaArtifacts> {
     }
 
     let (cert_pem, key_pem) = generate_ca_pem()?;
-    std::fs::write(&cert_path, cert_pem)
-        .with_context(|| format!("Failed to write CA cert: {}", cert_path.display()))?;
-    std::fs::write(&key_path, key_pem)
-        .with_context(|| format!("Failed to write CA key: {}", key_path.display()))?;
+
+    // Write via temp files then swap into place to avoid partial writes.
+    let cert_tmp = ca_dir.join(format!("{CA_CERT_FILE}.tmp"));
+    let key_tmp = ca_dir.join(format!("{CA_KEY_FILE}.tmp"));
+
+    std::fs::write(&cert_tmp, cert_pem)
+        .with_context(|| format!("Failed to write CA cert tmp: {}", cert_tmp.display()))?;
+    std::fs::write(&key_tmp, key_pem)
+        .with_context(|| format!("Failed to write CA key tmp: {}", key_tmp.display()))?;
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600));
+        let _ = std::fs::set_permissions(&key_tmp, std::fs::Permissions::from_mode(0o600));
     }
+
+    if cert_path.exists() {
+        let _ = std::fs::remove_file(&cert_path);
+    }
+    if key_path.exists() {
+        let _ = std::fs::remove_file(&key_path);
+    }
+    std::fs::rename(&cert_tmp, &cert_path)
+        .with_context(|| format!("Failed to swap CA cert: {}", cert_path.display()))?;
+    std::fs::rename(&key_tmp, &key_path)
+        .with_context(|| format!("Failed to swap CA key: {}", key_path.display()))?;
 
     Ok(CaArtifacts {
         cert_path,
@@ -107,7 +130,7 @@ mod tests {
     #[test]
     fn ensure_ca_requires_feature() {
         let err = ensure_ca(Path::new(".aiegis/ca")).expect_err("must fail");
-        assert!(err.to_string().contains("without the 'tls-mitm' feature"));
+        assert!(err.to_string().contains("'tls-mitm' feature"));
     }
 
     #[cfg(feature = "tls-mitm")]
@@ -138,5 +161,21 @@ mod tests {
 
         assert_eq!(cert_before, cert_after);
         assert_eq!(key_before, key_after);
+    }
+
+    #[cfg(feature = "tls-mitm")]
+    #[test]
+    fn init_ca_force_rotates_material() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let artifacts = ensure_ca(tmp.path()).expect("ensure");
+        let cert_before = std::fs::read_to_string(&artifacts.cert_path).expect("read cert");
+        let key_before = std::fs::read_to_string(&artifacts.key_path).expect("read key");
+
+        let artifacts_rotated = init_ca(tmp.path(), true).expect("force init");
+        let cert_after = std::fs::read_to_string(&artifacts_rotated.cert_path).expect("read cert");
+        let key_after = std::fs::read_to_string(&artifacts_rotated.key_path).expect("read key");
+
+        assert_ne!(cert_before, cert_after);
+        assert_ne!(key_before, key_after);
     }
 }

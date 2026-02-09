@@ -64,6 +64,13 @@ pub enum Command {
         #[command(subcommand)]
         action: RulesAction,
     },
+
+    #[cfg(feature = "tls-mitm")]
+    /// TLS tooling (Developer+ builds)
+    Tls {
+        #[command(subcommand)]
+        action: TlsAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -75,5 +82,48 @@ pub enum RulesAction {
     Test {
         /// The text to test against all detectors
         input: String,
+    },
+}
+
+#[cfg(feature = "tls-mitm")]
+#[derive(Subcommand)]
+pub enum TlsAction {
+    /// Local CA management for TLS MITM.
+    Ca {
+        #[command(subcommand)]
+        action: CaAction,
+    },
+}
+
+#[cfg(feature = "tls-mitm")]
+#[derive(Subcommand)]
+pub enum CaAction {
+    /// Create (or verify) the local CA material on disk.
+    Init {
+        /// CA directory (defaults to proxy.tls_mitm.ca_dir from config)
+        #[arg(long)]
+        ca_dir: Option<PathBuf>,
+
+        /// Overwrite existing CA files.
+        #[arg(long)]
+        force: bool,
+
+        /// Print the CA certificate PEM to stdout after creation.
+        #[arg(long)]
+        print_cert: bool,
+    },
+
+    /// Print the CA certificate PEM to stdout.
+    Print {
+        /// CA directory (defaults to proxy.tls_mitm.ca_dir from config)
+        #[arg(long)]
+        ca_dir: Option<PathBuf>,
+    },
+
+    /// Show CA paths and whether files exist.
+    Status {
+        /// CA directory (defaults to proxy.tls_mitm.ca_dir from config)
+        #[arg(long)]
+        ca_dir: Option<PathBuf>,
     },
 }

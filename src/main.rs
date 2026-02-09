@@ -19,6 +19,8 @@ use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use anyhow::{Context, Result};
 use clap::Parser;
 use cli::{Cli, Command, RulesAction};
+#[cfg(feature = "tls-mitm")]
+use cli::{CaAction, TlsAction};
 use config::{apply_overrides, load_config};
 use detection::classifier::build_classifier;
 use detection::injection::InjectionScanner;
@@ -271,6 +273,61 @@ async fn main() -> Result<()> {
                 let verdict = pipeline.scan(&input);
                 println!("{verdict}");
             }
+        },
+
+        #[cfg(feature = "tls-mitm")]
+        Command::Tls { action } => match action {
+            TlsAction::Ca { action } => match action {
+                CaAction::Init {
+                    ca_dir,
+                    force,
+                    print_cert,
+                } => {
+                    let ca_dir = ca_dir.unwrap_or_else(|| config.proxy.tls_mitm.ca_dir.clone());
+                    let artifacts = tls::init_ca(&ca_dir, force)?;
+
+                    if print_cert {
+                        eprintln!("CA directory: {}", ca_dir.display());
+                        eprintln!("CA cert:      {}", artifacts.cert_path.display());
+                        eprintln!("CA key:       {}", artifacts.key_path.display());
+                        let pem = std::fs::read_to_string(&artifacts.cert_path)
+                            .with_context(|| "Failed to read CA cert")?;
+                        print!("{pem}");
+                    } else {
+                        println!("CA directory: {}", ca_dir.display());
+                        println!("CA cert:      {}", artifacts.cert_path.display());
+                        println!("CA key:       {}", artifacts.key_path.display());
+                    }
+                }
+                CaAction::Print { ca_dir } => {
+                    let ca_dir = ca_dir.unwrap_or_else(|| config.proxy.tls_mitm.ca_dir.clone());
+                    let cert_path = ca_dir.join(tls::CA_CERT_FILE);
+                    let pem = std::fs::read_to_string(&cert_path).with_context(|| {
+                        format!(
+                            "Failed to read CA cert at {} (run: aiegis tls ca init)",
+                            cert_path.display()
+                        )
+                    })?;
+                    print!("{pem}");
+                }
+                CaAction::Status { ca_dir } => {
+                    let ca_dir = ca_dir.unwrap_or_else(|| config.proxy.tls_mitm.ca_dir.clone());
+                    let cert_path = ca_dir.join(tls::CA_CERT_FILE);
+                    let key_path = ca_dir.join(tls::CA_KEY_FILE);
+
+                    println!("CA directory: {}", ca_dir.display());
+                    println!(
+                        "CA cert:      {} ({})",
+                        cert_path.display(),
+                        if cert_path.exists() { "present" } else { "missing" }
+                    );
+                    println!(
+                        "CA key:       {} ({})",
+                        key_path.display(),
+                        if key_path.exists() { "present" } else { "missing" }
+                    );
+                }
+            },
         },
     }
 
