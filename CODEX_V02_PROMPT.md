@@ -1,5 +1,13 @@
 You are a senior Rust systems engineer planning the next version of Aiegis, a local AI security firewall. You will use a closed-loop iteration cycle with circuit breaker logic to plan every feature of V0.2.
 
+Repository reality check:
+- This repo ships **Shield (OSS)** by default: rules-only, no TLS MITM, no neural classifier.
+- V0.2 features are **feature-gated** behind Cargo features and tier gates:
+  - `tls-mitm` (TLS interception plumbing)
+  - `neural` (local ONNX classifier)
+  - `embed-models` (optional: compile selected model packages into the binary)
+- Model assets are **not committed** to OSS (`models/` is gitignored). Internal packaging/logging lives in the Realm private ops track.
+
 ## V0.1 BASELINE (what exists, shipped)
 
 - Rust binary, 3,780 LOC across 18 source files
@@ -12,7 +20,7 @@ You are a senior Rust systems engineer planning the next version of Aiegis, a lo
 - TOML config with defaults
 - Structured JSON logging (tracing)
 - Verdict: PASS / BLOCK / FLAG with confidence score + latency_us
-- Dependencies: hyper 1, tokio 1, rustls 0.23, tokio-rustls 0.26, aho-corasick 1, regex 1, clap 4, serde 1, tracing 0.1, anyhow 1, thiserror 2
+- Dependencies (core): hyper 1, tokio 1, rustls 0.23, tokio-rustls 0.26, aho-corasick 1, regex 1, clap 4, serde 1, tracing 0.1, anyhow 1, thiserror 2
 - GitHub: DuoNode-Inc/aiegis, tag v0.1.0
 - No TLS MITM, no LLM, no licensing, no dashboard, no telemetry
 
@@ -29,20 +37,39 @@ MITM transparent proxy using rustls + rcgen so Aiegis can inspect HTTPS request/
 - New file: src/tls.rs
 - Modified: src/proxy/forward.rs
 - New crates: rcgen
-- Test: Proxy HTTPS request to httpbin.org, verify request body was scanned
+- Test: Proxy HTTPS request (local test upstream preferred; httpbin.org optional), verify request body was scanned
+- Config:
+  - `proxy.tls_mitm.enabled`
+  - `proxy.tls_mitm.ca_dir` (CA material persistence)
+- Build flag: `--features tls-mitm`
 
 ### Feature Group B: Neural Classifier
 Add an ONNX-based ML classifier that fires on AMBIGUOUS verdicts from the rules engine (when rules can't decide).
-- ONNX Runtime for Rust inference
-- Tokenizer (tiktoken or sentencepiece compatible)
+- ONNX Runtime for Rust inference (local-only)
+- Tokenizer: Hugging Face `tokenizer.json` (via `tokenizers` crate)
 - Model: small text classifier (~50MB ONNX, quantized INT8)
 - Only fires when rules engine returns AMBIGUOUS (new verdict state)
 - First 512 tokens of input
 - Returns: { verdict: safe|injection|jailbreak|pii|malicious, confidence: 0.0-1.0 }
-- New files: src/detection/classifier.rs, src/detection/tokenizer.rs
-- Modified: src/detection/pipeline.rs (add AMBIGUOUS state, wire classifier)
+- New files:
+  - src/detection/classifier.rs (trait + ONNX-backed impl)
+  - src/detection/tokenizer.rs (token truncation + fallbacks)
+  - src/detection/model_package.rs (package defaults and resolution)
+  - src/detection/embedded.rs (embed-models support)
+  - build.rs (generates embedded package table when `embed-models` is enabled)
+- Modified: src/detection/pipeline.rs (AMBIGUOUS state + classifier escalation)
 - New crates: ort (ONNX Runtime), tokenizers
 - ~800 new LOC
+- Config:
+  - `detection.classifier.enabled`
+  - `detection.classifier.package`
+  - `detection.classifier.use_package_defaults`
+  - `detection.classifier.model_path` / `tokenizer_path`
+  - `detection.classifier.confidence_threshold`
+- Build flag: `--features neural`
+- Packaging modes:
+  - Disk-loaded models (default): model/tokenizer are local files on disk.
+  - Embedded models (optional): compile selected packages into the binary with `--features embed-models` and `AIEGIS_EMBED_PACKAGES=...`.
 
 ### Feature Group C: Enhanced Detection
 - AMBIGUOUS verdict state in pipeline (between PASS and BLOCK)
@@ -57,6 +84,13 @@ Add an ONNX-based ML classifier that fires on AMBIGUOUS verdicts from the rules 
 - Developer tier: TLS MITM + classifier + custom patterns
 - Sentinel tier: everything + rate limiting + metrics + dashboard (V0.3)
 - No actual license validation yet — just the gate structure and config
+- New files: src/mode.rs, src/tier.rs
+- Config:
+  - `runtime.tier` (optional override; defaults by detected mode)
+
+### Non-Blocking (Docs/Packaging) TODO
+- Docker runtime instructions (Shield + Developer builds)
+- Kubernetes runtime instructions (sidecar + gateway patterns)
 
 ## CLOSED-LOOP ITERATION CYCLE
 
@@ -100,7 +134,7 @@ For each feature group:
 
 ### Step 6: ACCEPTANCE CRITERIA
 When is this feature group DONE:
-- Test count target (V0.2 total should be 80+ tests)
+- Test count target (V0.2 total should be 100+ tests)
 - Benchmark targets (rules path stays <2ms, classifier path <50ms, TLS handshake <100ms)
 - Binary size target (<25MB with ONNX, <12MB without)
 - Feature verification checklist (specific curl commands that prove it works)
@@ -209,7 +243,7 @@ TIMELINE ESTIMATE
   M3 (hardening): {what's included}
 
 RELEASE CRITERIA
-  [ ] All tests pass (80+)
+  [ ] All tests pass (100+)
   [ ] cargo clippy -- -D warnings clean
   [ ] Binary size < 25MB (with ONNX) / < 12MB (without)
   [ ] Rules path < 2ms p99
@@ -232,6 +266,7 @@ RELEASE CRITERIA
 - Local-first: nothing phones home, no cloud dependencies
 - Backward compatible: V0.1 configs must still work in V0.2
 - Shield (free) tier must work identically to V0.1 — no regressions for free users
+- Do not log raw prompts/responses by default (audit-friendly metadata only)
 
 ## START
 
