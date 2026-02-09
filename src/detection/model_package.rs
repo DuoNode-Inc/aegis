@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use anyhow::{anyhow, Result};
 
 use crate::config::ClassifierConfig;
+use crate::detection::classifier::ClassifierVerdict;
 
 /// Static metadata describing a supported classifier package.
 #[derive(Debug, Clone)]
@@ -18,6 +19,7 @@ pub struct ClassifierPackageSpec {
     pub model_path: &'static str,
     pub tokenizer_path: &'static str,
     pub confidence_threshold: f64,
+    pub class_map: &'static [ClassifierVerdict],
 }
 
 /// Resolved classifier runtime configuration after package processing.
@@ -28,7 +30,36 @@ pub struct ResolvedClassifierConfig {
     pub model_path: PathBuf,
     pub tokenizer_path: PathBuf,
     pub confidence_threshold: f64,
+    pub class_map: Vec<ClassifierVerdict>,
 }
+
+const CLASS_MAP_CANONICAL_5: [ClassifierVerdict; 5] = [
+    ClassifierVerdict::Safe,
+    ClassifierVerdict::Injection,
+    ClassifierVerdict::Jailbreak,
+    ClassifierVerdict::Pii,
+    ClassifierVerdict::Malicious,
+];
+
+const CLASS_MAP_SAFE_INJECTION: [ClassifierVerdict; 2] = [
+    ClassifierVerdict::Safe,
+    ClassifierVerdict::Injection,
+];
+
+const PACKAGE_PROTECTAI_DEBERTA_V3_BASE_PROMPT_INJECTION: ClassifierPackageSpec =
+    ClassifierPackageSpec {
+        id: "protectai_deberta_v3_base_prompt_injection",
+        aliases: &[
+            "protectai_prompt_injection",
+            "protectai_deberta_prompt_injection",
+            "pi_deberta_v3_base",
+        ],
+        source_model: "protectai/deberta-v3-base-prompt-injection",
+        model_path: "models/packages/protectai_deberta_v3_base_prompt_injection/model.onnx",
+        tokenizer_path: "models/packages/protectai_deberta_v3_base_prompt_injection/tokenizer.json",
+        confidence_threshold: 0.85,
+        class_map: &CLASS_MAP_SAFE_INJECTION,
+    };
 
 const PACKAGE_META_PROMPT_GUARD_22M: ClassifierPackageSpec = ClassifierPackageSpec {
     id: "meta_prompt_guard_22m",
@@ -37,6 +68,7 @@ const PACKAGE_META_PROMPT_GUARD_22M: ClassifierPackageSpec = ClassifierPackageSp
     model_path: "models/packages/meta_prompt_guard_22m/model.onnx",
     tokenizer_path: "models/packages/meta_prompt_guard_22m/tokenizer.json",
     confidence_threshold: 0.76,
+    class_map: &CLASS_MAP_SAFE_INJECTION,
 };
 
 const PACKAGE_META_PROMPT_GUARD_86M: ClassifierPackageSpec = ClassifierPackageSpec {
@@ -46,6 +78,7 @@ const PACKAGE_META_PROMPT_GUARD_86M: ClassifierPackageSpec = ClassifierPackageSp
     model_path: "models/packages/meta_prompt_guard_86m/model.onnx",
     tokenizer_path: "models/packages/meta_prompt_guard_86m/tokenizer.json",
     confidence_threshold: 0.82,
+    class_map: &CLASS_MAP_SAFE_INJECTION,
 };
 
 const PACKAGE_META_LLAMA_GUARD_4_12B_INT8: ClassifierPackageSpec = ClassifierPackageSpec {
@@ -55,6 +88,7 @@ const PACKAGE_META_LLAMA_GUARD_4_12B_INT8: ClassifierPackageSpec = ClassifierPac
     model_path: "models/packages/meta_llama_guard_4_12b_int8/model.onnx",
     tokenizer_path: "models/packages/meta_llama_guard_4_12b_int8/tokenizer.json",
     confidence_threshold: 0.88,
+    class_map: &CLASS_MAP_CANONICAL_5,
 };
 
 const PACKAGE_NVIDIA_NEMOTRON_70B_ADAPTER: ClassifierPackageSpec = ClassifierPackageSpec {
@@ -64,6 +98,7 @@ const PACKAGE_NVIDIA_NEMOTRON_70B_ADAPTER: ClassifierPackageSpec = ClassifierPac
     model_path: "models/packages/nvidia_nemotron_70b_guard_adapter/model.onnx",
     tokenizer_path: "models/packages/nvidia_nemotron_70b_guard_adapter/tokenizer.json",
     confidence_threshold: 0.86,
+    class_map: &CLASS_MAP_CANONICAL_5,
 };
 
 const PACKAGE_DEEPSEEK_R1_DISTILL_70B_ADAPTER: ClassifierPackageSpec = ClassifierPackageSpec {
@@ -73,9 +108,11 @@ const PACKAGE_DEEPSEEK_R1_DISTILL_70B_ADAPTER: ClassifierPackageSpec = Classifie
     model_path: "models/packages/deepseek_r1_distill_70b_guard_adapter/model.onnx",
     tokenizer_path: "models/packages/deepseek_r1_distill_70b_guard_adapter/tokenizer.json",
     confidence_threshold: 0.87,
+    class_map: &CLASS_MAP_CANONICAL_5,
 };
 
 pub const CLASSIFIER_PACKAGES: &[ClassifierPackageSpec] = &[
+    PACKAGE_PROTECTAI_DEBERTA_V3_BASE_PROMPT_INJECTION,
     PACKAGE_META_PROMPT_GUARD_22M,
     PACKAGE_META_PROMPT_GUARD_86M,
     PACKAGE_META_LLAMA_GUARD_4_12B_INT8,
@@ -90,6 +127,7 @@ pub fn resolve_classifier_config(config: &ClassifierConfig) -> Result<ResolvedCl
         model_path: config.model_path.clone(),
         tokenizer_path: config.tokenizer_path.clone(),
         confidence_threshold: config.confidence_threshold,
+        class_map: CLASS_MAP_CANONICAL_5.to_vec(),
     };
 
     if !config.enabled {
@@ -112,6 +150,7 @@ pub fn resolve_classifier_config(config: &ClassifierConfig) -> Result<ResolvedCl
 
     resolved.package = Some(spec.id.to_string());
     resolved.source_model = Some(spec.source_model.to_string());
+    resolved.class_map = spec.class_map.to_vec();
 
     if config.use_package_defaults {
         resolved.model_path = PathBuf::from(spec.model_path);
@@ -152,6 +191,7 @@ mod tests {
             PathBuf::from("models/neural-shield.onnx")
         );
         assert_eq!(resolved.confidence_threshold, 0.85);
+        assert_eq!(resolved.class_map, CLASS_MAP_CANONICAL_5.to_vec());
     }
 
     #[test]
@@ -170,6 +210,7 @@ mod tests {
             PathBuf::from("models/packages/meta_prompt_guard_86m/model.onnx")
         );
         assert_eq!(resolved.confidence_threshold, 0.82);
+        assert_eq!(resolved.class_map, CLASS_MAP_SAFE_INJECTION.to_vec());
     }
 
     #[test]

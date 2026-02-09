@@ -61,6 +61,7 @@ fn build_pipeline(config: &config::AiegisConfig) -> Result<Pipeline> {
     let classifier = build_classifier(
         config.detection.classifier.enabled,
         classifier_config.package.as_deref(),
+        &classifier_config.class_map,
         &classifier_config.model_path,
         &classifier_config.tokenizer_path,
     )?;

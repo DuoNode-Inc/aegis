@@ -93,32 +93,35 @@ pub trait Classifier: Send + Sync {
 pub fn build_classifier(
     enabled: bool,
     package: Option<&str>,
+    class_map: &[ClassifierVerdict],
     model_path: &Path,
     tokenizer_path: &Path,
 ) -> Result<Option<Arc<dyn Classifier>>> {
     if !enabled {
         return Ok(None);
     }
-    build_enabled_classifier(package, model_path, tokenizer_path).map(Some)
+    build_enabled_classifier(package, class_map, model_path, tokenizer_path).map(Some)
 }
 
 #[cfg(feature = "neural")]
 fn build_enabled_classifier(
     package: Option<&str>,
+    class_map: &[ClassifierVerdict],
     model_path: &Path,
     tokenizer_path: &Path,
 ) -> Result<Arc<dyn Classifier>> {
-    let classifier = OnnxClassifier::load(package, model_path, tokenizer_path)?;
+    let classifier = OnnxClassifier::load(package, class_map, model_path, tokenizer_path)?;
     Ok(Arc::new(classifier))
 }
 
 #[cfg(not(feature = "neural"))]
 fn build_enabled_classifier(
     package: Option<&str>,
+    class_map: &[ClassifierVerdict],
     model_path: &Path,
     tokenizer_path: &Path,
 ) -> Result<Arc<dyn Classifier>> {
-    let _ = (package, model_path, tokenizer_path);
+    let _ = (package, class_map, model_path, tokenizer_path);
     Err(anyhow!(
         "Neural classifier is enabled in config, but this binary was built without the 'neural' feature. Rebuild with: cargo build --features neural"
     ))
@@ -145,11 +148,25 @@ impl Classifier for NoopClassifier {
 pub struct OnnxClassifier {
     session: Mutex<Session>,
     tokenizer: Option<Tokenizer>,
+    class_map: Vec<ClassifierVerdict>,
 }
 
 #[cfg(feature = "neural")]
 impl OnnxClassifier {
-    pub fn load(package: Option<&str>, model_path: &Path, tokenizer_path: &Path) -> Result<Self> {
+    pub fn load(
+        package: Option<&str>,
+        class_map: &[ClassifierVerdict],
+        model_path: &Path,
+        tokenizer_path: &Path,
+    ) -> Result<Self> {
+        if class_map.len() < 2 {
+            return Err(anyhow!(
+                "Classifier class_map must contain at least 2 labels (got {})",
+                class_map.len()
+            ));
+        }
+        let class_map = class_map.to_vec();
+
         // `package` is only needed for embedded fallback (feature-gated). Avoid
         // unused warnings in neural-only builds.
         #[cfg(not(feature = "embed-models"))]
@@ -181,6 +198,7 @@ impl OnnxClassifier {
                                 anyhow!("Failed to load embedded tokenizer for package '{pkg}': {err}")
                             })?,
                         ),
+                        class_map,
                     });
                 }
             }
@@ -240,6 +258,7 @@ impl OnnxClassifier {
         Ok(Self {
             session: Mutex::new(session),
             tokenizer,
+            class_map,
         })
     }
 
@@ -310,9 +329,9 @@ impl OnnxClassifier {
             .try_extract_tensor::<f32>()
             .context("Failed to extract f32 logits from ONNX output[0]")?;
 
-        if logits.len() < 5 {
+        if logits.len() < 2 {
             return Err(anyhow!(
-                "Classifier output tensor too small ({} logits); expected at least 5 classes",
+                "Classifier output tensor too small ({} logits); expected at least 2 classes",
                 logits.len()
             ));
         }
@@ -326,6 +345,13 @@ impl Classifier for OnnxClassifier {
     fn classify(&self, input: &str) -> Result<ClassifierResult> {
         let token_ids = self.encode_ids(input)?;
         let logits = self.run_logits(&token_ids)?;
+        if logits.len() != self.class_map.len() {
+            return Err(anyhow!(
+                "Classifier returned {} logits, but class_map contains {} labels",
+                logits.len(),
+                self.class_map.len()
+            ));
+        }
 
         let (best_idx, _) = logits
             .iter()
@@ -334,7 +360,12 @@ impl Classifier for OnnxClassifier {
             .ok_or_else(|| anyhow!("Classifier returned empty logits"))?;
 
         let confidence = softmax_probability(&logits, best_idx);
-        let verdict = ClassifierVerdict::from_index(best_idx)?;
+        let verdict = *self.class_map.get(best_idx).ok_or_else(|| {
+            anyhow!(
+                "Classifier predicted class index {best_idx}, but class_map has {} labels",
+                self.class_map.len()
+            )
+        })?;
         Ok(ClassifierResult {
             verdict,
             confidence,
@@ -424,7 +455,19 @@ mod tests {
             return;
         }
 
-        let classifier = OnnxClassifier::load(None, &model_path, &tokenizer_path).expect("load model");
+        let classifier = OnnxClassifier::load(
+            None,
+            &[
+                ClassifierVerdict::Safe,
+                ClassifierVerdict::Injection,
+                ClassifierVerdict::Jailbreak,
+                ClassifierVerdict::Pii,
+                ClassifierVerdict::Malicious,
+            ],
+            &model_path,
+            &tokenizer_path,
+        )
+        .expect("load model");
         let output = classifier.classify("Hello world").expect("classify");
         assert!((0.0..=1.0).contains(&output.confidence));
     }
@@ -435,6 +478,13 @@ mod tests {
         let result = build_classifier(
             true,
             None,
+            &[
+                ClassifierVerdict::Safe,
+                ClassifierVerdict::Injection,
+                ClassifierVerdict::Jailbreak,
+                ClassifierVerdict::Pii,
+                ClassifierVerdict::Malicious,
+            ],
             Path::new("models/neural-shield.onnx"),
             Path::new("models/neural-shield-tokenizer.json"),
         );

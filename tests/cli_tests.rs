@@ -50,8 +50,8 @@ fn rules_list_pattern_counts() {
 
     // Verify we loaded the expected number of patterns
     assert!(
-        stdout.contains("Injection patterns: 147"),
-        "Expected 147 injection patterns, got: {stdout}"
+        stdout.contains("Injection patterns: 152"),
+        "Expected 152 injection patterns, got: {stdout}"
     );
     assert!(
         stdout.contains("PII patterns:       27"),
