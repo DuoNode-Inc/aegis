@@ -4,6 +4,7 @@
 
 mod cli;
 mod config;
+mod crypto;
 mod detection;
 mod endpoints;
 mod license;
@@ -19,9 +20,9 @@ use std::io::{BufRead, BufReader, Seek, SeekFrom};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use cli::{Cli, Command, LicenseAction, LlmAction, RulesAction};
 #[cfg(feature = "tls-mitm")]
 use cli::{CaAction, TlsAction};
+use cli::{Cli, Command, LicenseAction, LlmAction, RulesAction};
 use config::{apply_overrides, load_config};
 use detection::classifier::build_classifier;
 use detection::injection::InjectionScanner;
@@ -101,6 +102,7 @@ fn build_pipeline(config: &config::AiegisConfig) -> Result<Pipeline> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    crypto::ensure_rustls_provider();
     let cli = Cli::parse();
     let config = load_config(cli.config.as_deref())?;
     let runtime_mode = detect_mode();
@@ -108,7 +110,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Command::Start { mode, host, port } => {
-            let config = apply_overrides(config, Some(&mode), host.as_deref(), port);
+            let config = apply_overrides(config, mode.as_deref(), host.as_deref(), port);
             logging::init(&config.logging)?;
             validate_tier_config(&config, resolved_tier)?;
             let classifier_config = resolve_classifier_config(&config.detection.classifier)?;
@@ -314,7 +316,10 @@ async fn main() -> Result<()> {
                 println!("─────────────────────────────────");
                 println!("Built with llm-local: {}", cfg!(feature = "llm-local"));
                 println!("Enabled in config:    {}", config.detection.llm.enabled);
-                println!("Model path:           {}", config.detection.llm.model_path.display());
+                println!(
+                    "Model path:           {}",
+                    config.detection.llm.model_path.display()
+                );
                 println!(
                     "Model present:        {}",
                     if config.detection.llm.model_path.exists() {
@@ -372,7 +377,11 @@ async fn main() -> Result<()> {
                             println!("License activated successfully.");
                             println!("  User:    {}", claims.user);
                             println!("  Tier:    {}", claims.tier);
-                            println!("  Expires: {} ({} days remaining)", claims.expiry, claims.days_remaining());
+                            println!(
+                                "  Expires: {} ({} days remaining)",
+                                claims.expiry,
+                                claims.days_remaining()
+                            );
                             println!("  Saved:   {}", path.display());
                         }
                     }
@@ -402,7 +411,11 @@ async fn main() -> Result<()> {
                                     println!("Status:  VALID");
                                     println!("User:    {}", claims.user);
                                     println!("Tier:    {}", claims.tier);
-                                    println!("Expires: {} ({} days remaining)", claims.expiry, claims.days_remaining());
+                                    println!(
+                                        "Expires: {} ({} days remaining)",
+                                        claims.expiry,
+                                        claims.days_remaining()
+                                    );
                                 }
                             }
                             Err(e) => {
@@ -467,12 +480,20 @@ async fn main() -> Result<()> {
                     println!(
                         "CA cert:      {} ({})",
                         cert_path.display(),
-                        if cert_path.exists() { "present" } else { "missing" }
+                        if cert_path.exists() {
+                            "present"
+                        } else {
+                            "missing"
+                        }
                     );
                     println!(
                         "CA key:       {} ({})",
                         key_path.display(),
-                        if key_path.exists() { "present" } else { "missing" }
+                        if key_path.exists() {
+                            "present"
+                        } else {
+                            "missing"
+                        }
                     );
                 }
             },

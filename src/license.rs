@@ -83,7 +83,8 @@ impl LicenseVerifier {
 
     /// Create a verifier from a base64-encoded public key.
     pub fn from_base64(key_b64: &str) -> Result<Self> {
-        let key_bytes = BASE64.decode(key_b64)
+        let key_bytes = BASE64
+            .decode(key_b64)
             .context("Invalid base64 in public key")?;
 
         // Handle raw 32-byte keys or DER-wrapped keys (44 bytes for Ed25519 SPKI)
@@ -100,8 +101,8 @@ impl LicenseVerifier {
             .try_into()
             .map_err(|_| anyhow!("Failed to convert public key bytes"))?;
 
-        let public_key = VerifyingKey::from_bytes(&key_array)
-            .context("Invalid Ed25519 public key")?;
+        let public_key =
+            VerifyingKey::from_bytes(&key_array).context("Invalid Ed25519 public key")?;
 
         Ok(Self { public_key })
     }
@@ -112,12 +113,16 @@ impl LicenseVerifier {
     pub fn verify(&self, license_key: &str) -> Result<LicenseClaims> {
         let parts: Vec<&str> = license_key.trim().splitn(2, '.').collect();
         if parts.len() != 2 {
-            return Err(anyhow!("Invalid license format: expected 'signature.payload'"));
+            return Err(anyhow!(
+                "Invalid license format: expected 'signature.payload'"
+            ));
         }
 
-        let sig_bytes = BASE64.decode(parts[0])
+        let sig_bytes = BASE64
+            .decode(parts[0])
             .context("Invalid base64 in signature")?;
-        let payload_bytes = BASE64.decode(parts[1])
+        let payload_bytes = BASE64
+            .decode(parts[1])
             .context("Invalid base64 in payload")?;
 
         let signature = Signature::from_slice(&sig_bytes)
@@ -125,12 +130,13 @@ impl LicenseVerifier {
 
         // Verify signature over the raw payload bytes
         use ed25519_dalek::Verifier;
-        self.public_key.verify(&payload_bytes, &signature)
+        self.public_key
+            .verify(&payload_bytes, &signature)
             .map_err(|_| anyhow!("License signature verification failed"))?;
 
         // Parse the verified payload
-        let claims: LicenseClaims = serde_json::from_slice(&payload_bytes)
-            .context("License payload is not valid JSON")?;
+        let claims: LicenseClaims =
+            serde_json::from_slice(&payload_bytes).context("License payload is not valid JSON")?;
 
         Ok(claims)
     }
@@ -210,16 +216,15 @@ pub fn tier_from_license() -> Option<Tier> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::{SigningKey, Signer};
+    use ed25519_dalek::{Signer, SigningKey};
 
     /// Helper: generate a keypair and create a signed license.
     fn make_signed_license(claims: &LicenseClaims) -> (String, VerifyingKey) {
         // Deterministic test key (32 bytes of repeating pattern)
         let secret_bytes: [u8; 32] = [
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-            0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
-            0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-            0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+            0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
+            0x1d, 0x1e, 0x1f, 0x20,
         ];
         let signing_key = SigningKey::from_bytes(&secret_bytes);
         let verifying_key = signing_key.verifying_key();
@@ -302,7 +307,10 @@ mod tests {
         };
         let result = verifier.verify(&tampered_key);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("verification failed"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("verification failed"));
     }
 
     #[test]

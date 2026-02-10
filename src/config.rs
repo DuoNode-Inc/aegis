@@ -46,7 +46,17 @@ pub struct ProxyConfig {
     #[serde(default = "default_tunnel_timeout_secs")]
     pub tunnel_timeout_secs: u64,
     #[serde(default)]
+    pub upstream_tls: UpstreamTlsConfig,
+    #[serde(default)]
     pub tls_mitm: TlsMitmConfig,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct UpstreamTlsConfig {
+    /// Optional extra CA bundle PEM to trust for upstream TLS connections.
+    /// Useful for testing with local self-signed upstreams or enterprise PKI roots.
+    #[serde(default)]
+    pub extra_ca_bundle_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -271,7 +281,16 @@ impl Default for ProxyConfig {
             max_body_size: default_max_body_size(),
             max_connections: default_max_connections(),
             tunnel_timeout_secs: default_tunnel_timeout_secs(),
+            upstream_tls: UpstreamTlsConfig::default(),
             tls_mitm: TlsMitmConfig::default(),
+        }
+    }
+}
+
+impl Default for UpstreamTlsConfig {
+    fn default() -> Self {
+        Self {
+            extra_ca_bundle_path: None,
         }
     }
 }

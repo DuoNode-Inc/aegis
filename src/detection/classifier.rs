@@ -226,34 +226,37 @@ impl OnnxClassifier {
                 .with_context(|| format!("Failed to load ONNX model: {}", model_path.display()))?
         };
 
-        let tokenizer = if tokenizer_path.exists() {
-            Some(Tokenizer::from_file(tokenizer_path).map_err(|err| {
-                anyhow!(
-                    "Failed to load tokenizer {}: {err}",
-                    tokenizer_path.display()
-                )
-            })?)
-        } else {
-            #[cfg(feature = "embed-models")]
-            {
-                // In embed-models builds we prefer embedded tokenizer bytes (handled above)
-                // unless disk override was enabled.
-                if disk_override {
-                    None
-                } else {
-                    embedded_pkg.map(|(pkg, embedded)| {
-                        Tokenizer::from_bytes(embedded.tokenizer).map_err(|err| {
+        let tokenizer =
+            if tokenizer_path.exists() {
+                Some(Tokenizer::from_file(tokenizer_path).map_err(|err| {
+                    anyhow!(
+                        "Failed to load tokenizer {}: {err}",
+                        tokenizer_path.display()
+                    )
+                })?)
+            } else {
+                #[cfg(feature = "embed-models")]
+                {
+                    // In embed-models builds we prefer embedded tokenizer bytes (handled above)
+                    // unless disk override was enabled.
+                    if disk_override {
+                        None
+                    } else {
+                        embedded_pkg
+                            .map(|(pkg, embedded)| {
+                                Tokenizer::from_bytes(embedded.tokenizer).map_err(|err| {
                             anyhow!("Failed to load embedded tokenizer for package '{pkg}': {err}")
                         })
-                    }).transpose()?
+                            })
+                            .transpose()?
+                    }
                 }
-            }
 
-            #[cfg(not(feature = "embed-models"))]
-            {
-                None
-            }
-        };
+                #[cfg(not(feature = "embed-models"))]
+                {
+                    None
+                }
+            };
 
         Ok(Self {
             session: Mutex::new(session),

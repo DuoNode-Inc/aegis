@@ -299,8 +299,8 @@ impl std::fmt::Display for Verdict {
 mod tests {
     use super::*;
     use crate::detection::classifier::{Classifier, ClassifierResult, ClassifierVerdict};
-    use crate::detection::llm::{LlmClassifier, LlmResult, LlmScanContext};
     use crate::detection::injection::InjectionScanner;
+    use crate::detection::llm::{LlmClassifier, LlmResult, LlmScanContext};
     use crate::detection::pii::PiiScanner;
     use crate::rules::loader::PiiRule;
     use std::sync::{
@@ -587,7 +587,15 @@ mod tests {
                 reason: "policy violation".into(),
             }),
         });
-        let p = test_pipeline_with_classifier_and_llm(None, Some(llm), false, 0.85, true, 0.85, Action::Block);
+        let p = test_pipeline_with_classifier_and_llm(
+            None,
+            Some(llm),
+            false,
+            0.85,
+            true,
+            0.85,
+            Action::Block,
+        );
 
         // Clean input should not invoke LLM.
         let clean = p.scan("normal user text");
@@ -612,7 +620,15 @@ mod tests {
                 reason: "low confidence".into(),
             }),
         });
-        let p = test_pipeline_with_classifier_and_llm(None, Some(llm), false, 0.85, true, 0.85, Action::Block);
+        let p = test_pipeline_with_classifier_and_llm(
+            None,
+            Some(llm),
+            false,
+            0.85,
+            true,
+            0.85,
+            Action::Block,
+        );
         let noisy = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".repeat(4);
         let v = p.scan(&noisy);
         assert_eq!(v.action, Action::Ambiguous);

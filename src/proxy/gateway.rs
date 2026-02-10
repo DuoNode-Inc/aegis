@@ -15,7 +15,6 @@ use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
-use hyper_rustls::ConfigBuilderExt;
 use hyper_util::rt::TokioIo;
 use serde_json::json;
 use tokio::net::TcpListener;
@@ -25,6 +24,7 @@ use crate::config::AiegisConfig;
 use crate::detection::pipeline::Pipeline;
 use crate::endpoints::EndpointMatcher;
 use crate::proxy::handler;
+use crate::proxy::upstream_tls;
 
 type HttpsClient = hyper_util::client::legacy::Client<
     hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
@@ -33,7 +33,7 @@ type HttpsClient = hyper_util::client::legacy::Client<
 
 /// Shared state for the gateway proxy.
 struct GatewayState {
-    pipeline: Pipeline,
+    pipeline: Arc<Pipeline>,
     endpoints: EndpointMatcher,
     client: HttpsClient,
     max_body_size: usize,
@@ -41,12 +41,10 @@ struct GatewayState {
 }
 
 /// Build an HTTPS client using rustls + webpki roots (built once, reused).
-fn build_https_client() -> Result<HttpsClient> {
+fn build_https_client(extra_ca_bundle_path: Option<&std::path::Path>) -> Result<HttpsClient> {
     use hyper_util::client::legacy::Client;
 
-    let tls = rustls::ClientConfig::builder()
-        .with_webpki_roots()
-        .with_no_client_auth();
+    let tls = upstream_tls::build_rustls_client_config(extra_ca_bundle_path)?;
 
     let https = hyper_rustls::HttpsConnectorBuilder::new()
         .with_tls_config(tls)
@@ -61,11 +59,11 @@ fn build_https_client() -> Result<HttpsClient> {
 pub async fn run(config: AiegisConfig, pipeline: Pipeline) -> Result<()> {
     let addr: SocketAddr = format!("{}:{}", config.proxy.host, config.proxy.port).parse()?;
     let endpoints = EndpointMatcher::new(&config.endpoints.targets);
-    let client = build_https_client()?;
+    let client = build_https_client(config.proxy.upstream_tls.extra_ca_bundle_path.as_deref())?;
     let semaphore = Arc::new(Semaphore::new(config.proxy.max_connections));
 
     let state = Arc::new(GatewayState {
-        pipeline,
+        pipeline: Arc::new(pipeline),
         endpoints,
         client,
         max_body_size: config.proxy.max_body_size,
@@ -174,7 +172,7 @@ async fn handle_request(
     // Run detection pipeline on request body
     if !body_str.is_empty() {
         if let Some(block_resp) = handler::scan_request(
-            &state.pipeline,
+            state.pipeline.as_ref(),
             &body_str,
             source,
             destination,
@@ -235,7 +233,7 @@ async fn handle_request(
             // Scan response body for PII/entropy (exfiltration detection)
             if !resp_body.is_empty() {
                 let resp_str = String::from_utf8_lossy(&resp_body);
-                handler::scan_response(&state.pipeline, &resp_str, source, destination);
+                handler::scan_response(state.pipeline.as_ref(), &resp_str, source, destination);
             }
 
             let mut response = Response::builder().status(status);

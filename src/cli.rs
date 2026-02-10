@@ -30,8 +30,8 @@ pub enum Command {
     /// Start the Aiegis proxy
     Start {
         /// Proxy mode: "gateway" (reverse proxy) or "proxy" (forward/HTTP_PROXY)
-        #[arg(short, long, default_value = "gateway")]
-        mode: String,
+        #[arg(short, long)]
+        mode: Option<String>,
 
         /// Host to bind on
         #[arg(long)]

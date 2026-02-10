@@ -2,6 +2,12 @@
 
 A local AI firewall. Rust binary. Intercepts traffic between your applications and AI API endpoints. Scans prompts and responses for prompt injection, PII leakage, credential exposure, and encoded data exfiltration. Local-first: nothing phones home.
 
+## Non-Negotiables
+
+- **NO CLOUD inference.** All classification runs on-device.
+- **No runtime weight downloads.** Neural assets (ONNX/GGUF) are loaded from local disk or embedded at build time.
+- **Deterministic first.** Rules run on the hot path; neural escalation is optional.
+
 ## Install
 
 ```bash
@@ -13,16 +19,29 @@ cargo build --release
 
 This repo supports three build flavors (all inference is local; NO CLOUD):
 
-- **Shield (default)**: rules-only detection, no TLS MITM, no neural classifier.
+- **Shield (default build)**: rules-only detection (injection + PII + entropy).
   - Build: `cargo build --release`
-- **Developer (feature-gated)**: enables TLS MITM + local ONNX classifier (no cloud inference).
+- **Developer (feature-gated)**: enables forward-proxy HTTPS inspection via TLS MITM + local ONNX classifier (still no cloud inference).
   - Build: `cargo build --release --features "tls-mitm,neural"`
-- **Enterprise (feature-gated)**: enables TLS MITM + ONNX + local LLM (llama.cpp GGUF).
+- **Sentinel (feature-gated)**: enables TLS MITM + ONNX + local LLM (llama.cpp GGUF).
   - Build: `cargo build --release --features "tls-mitm,neural,llm-local"`
   - Build dependency: `cmake` (used to build llama.cpp via `llama-cpp-sys-2`)
 
 Optional (Developer): embed selected model packages into the binary at build time:
 - Build: `AIEGIS_EMBED_PACKAGES=meta_prompt_guard_86m cargo build --release --features "tls-mitm,neural,embed-models"`
+
+### Capabilities Matrix (Accurate)
+
+Build features determine what code paths exist in the binary. The **runtime tier** (`shield`/`developer`/`sentinel`) gates which features can be enabled via config or license.
+
+| Capability | Shield tier | Developer tier | Sentinel tier |
+|---|---:|---:|---:|
+| Gateway reverse proxy (body inspection) | Yes | Yes | Yes |
+| Forward proxy (HTTP) inspection | Yes | Yes | Yes |
+| Forward proxy HTTPS inspection (CONNECT MITM) | No | Yes (tls-mitm build + CA trust) | Yes (tls-mitm build + CA trust) |
+| Rules engine (injection + PII + entropy) | Yes | Yes | Yes |
+| ONNX classifier escalation | No | Yes (neural build) | Yes (neural build) |
+| Local LLM escalation (GGUF/llama.cpp) | No | No | Yes (llm-local build + GGUF on disk) |
 
 ## Quickstart
 
@@ -85,12 +104,34 @@ Pipeline short-circuits: if injection is detected, PII scan is skipped.
 
 If the rules pipeline returns **AMBIGUOUS**:
 - Developer builds can optionally run a local ONNX classifier to escalate to PASS/BLOCK.
-- Enterprise builds can optionally run a local LLM (GGUF) to resolve contextual cases.
+- Sentinel builds can optionally run a local LLM (GGUF) to resolve contextual cases.
 
 ## Proxy Modes
 
 - **Gateway** (default): Reverse proxy. Point your SDK's base URL at `localhost:8080/<provider>`. Aiegis strips the prefix, scans the body, and forwards to the real API over TLS.
-- **Proxy**: Forward HTTP proxy. Set `HTTP_PROXY=http://localhost:8080`. HTTPS traffic is tunneled (CONNECT) unless built with TLS MITM support (`--features tls-mitm`).
+- **Proxy**: Forward HTTP proxy. Set `HTTP_PROXY=http://localhost:8080` and `HTTPS_PROXY=http://localhost:8080`.
+  - Without TLS MITM: HTTPS CONNECT is an **opaque tunnel** (no body inspection).
+  - With TLS MITM (`--features tls-mitm`) and a trusted Aiegis CA: AI endpoint CONNECT tunnels are **intercepted** and inspected.
+
+### Forward Proxy + TLS MITM (HTTPS Inspection)
+
+TLS MITM is required to inspect HTTPS bodies in forward-proxy mode.
+
+1. Build Developer or Sentinel flavor:
+   - `cargo build --release --features tls-mitm`
+2. Initialize a local CA:
+   - `aiegis tls ca init`
+3. Install the CA cert into your OS/app trust store (macOS example):
+   - `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain .aiegis/ca/ca.pem`
+4. Start the forward proxy:
+   - `aiegis start --mode proxy`
+5. Point your client at Aiegis:
+   - `export HTTPS_PROXY=http://127.0.0.1:8080`
+
+Important constraints:
+- Aiegis currently serves **HTTP/1.1 inside CONNECT**. HTTP/2 inside the tunnel is not supported yet.
+- Apps that use **certificate pinning** will not work under MITM interception.
+- Only configured AI endpoints are scanned; non-AI CONNECT traffic is passed through.
 
 ## Docker & Kubernetes (TODO)
 
@@ -125,6 +166,15 @@ tier = "sentinel"
 enabled = true
 model_path = "models/llm/model.gguf"
 confidence_threshold = 0.80
+```
+
+### Upstream TLS Trust (Testing + Enterprise PKI)
+
+By default Aiegis validates upstream TLS using WebPKI roots. For local testing against a self-signed upstream server, or enterprise environments with additional internal roots, add an extra CA bundle:
+
+```toml
+[proxy.upstream_tls]
+extra_ca_bundle_path = "/etc/pki/extra-roots.pem"
 ```
 
 ### Model Packaging (Simple)

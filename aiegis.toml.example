@@ -15,6 +15,13 @@ port = 8080
 # Proxy mode: "gateway" (reverse proxy, default) or "proxy" (forward/HTTP_PROXY)
 mode = "gateway"
 
+[proxy.upstream_tls]
+# Optional extra CA bundle PEM to trust for upstream TLS connections.
+# This is primarily used for:
+# - local testing against a self-signed upstream HTTPS server
+# - enterprise deployments with additional internal PKI roots
+# extra_ca_bundle_path = "/etc/pki/extra-roots.pem"
+
 [proxy.tls_mitm]
 # Enable TLS transparent proxy (Developer+ tier)
 enabled = false

@@ -25,9 +25,7 @@ fn main() {
 
     for id in &package_ids {
         if !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-            panic!(
-                "Invalid package id '{id}' in AIEGIS_EMBED_PACKAGES. Allowed: [A-Za-z0-9_]"
-            );
+            panic!("Invalid package id '{id}' in AIEGIS_EMBED_PACKAGES. Allowed: [A-Za-z0-9_]");
         }
     }
 
@@ -78,4 +76,3 @@ fn main() {
 
     fs::write(&generated_path, body).expect("write embedded model metadata");
 }
-

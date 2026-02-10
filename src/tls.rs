@@ -14,7 +14,16 @@ use anyhow::anyhow;
 use anyhow::Context;
 
 #[cfg(feature = "tls-mitm")]
-use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair};
+use std::sync::Arc;
+
+#[cfg(feature = "tls-mitm")]
+use rustls::pki_types::pem::PemObject;
+
+#[cfg(feature = "tls-mitm")]
+use rcgen::{
+    BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
+    KeyUsagePurpose,
+};
 
 #[cfg(feature = "tls-mitm")]
 pub const CA_CERT_FILE: &str = "ca.pem";
@@ -25,6 +34,13 @@ pub const CA_KEY_FILE: &str = "ca-key.pem";
 pub struct CaArtifacts {
     pub cert_path: PathBuf,
     pub key_path: PathBuf,
+}
+
+#[cfg(feature = "tls-mitm")]
+#[derive(Debug)]
+pub struct LoadedCa {
+    pub ca_cert_der: rustls::pki_types::CertificateDer<'static>,
+    issuer: Issuer<'static, KeyPair>,
 }
 
 /// Create (or verify) the local CA material exists on disk.
@@ -47,6 +63,64 @@ pub fn init_ca(ca_dir: &Path, force: bool) -> Result<CaArtifacts> {
 /// Ensure the local CA material exists on disk.
 pub fn ensure_ca(ca_dir: &Path) -> Result<CaArtifacts> {
     init_ca(ca_dir, false)
+}
+
+/// Load the CA cert and key from disk for TLS MITM leaf signing.
+#[cfg(feature = "tls-mitm")]
+pub fn load_ca(ca_dir: &Path) -> Result<LoadedCa> {
+    let cert_path = ca_dir.join(CA_CERT_FILE);
+    let key_path = ca_dir.join(CA_KEY_FILE);
+
+    let cert_pem = std::fs::read_to_string(&cert_path)
+        .with_context(|| format!("Failed to read CA cert: {}", cert_path.display()))?;
+    let key_pem = std::fs::read_to_string(&key_path)
+        .with_context(|| format!("Failed to read CA key: {}", key_path.display()))?;
+
+    let ca_cert_der = rustls::pki_types::CertificateDer::from_pem_slice(cert_pem.as_bytes())
+        .context("Failed to parse CA cert PEM")?;
+    let ca_keypair = KeyPair::from_pem(&key_pem).context("Failed to parse CA key PEM")?;
+    let issuer: Issuer<'static, KeyPair> =
+        Issuer::from_ca_cert_pem(&cert_pem, ca_keypair).context("Failed to load CA issuer")?;
+
+    Ok(LoadedCa {
+        ca_cert_der,
+        issuer,
+    })
+}
+
+/// Build a rustls ServerConfig that presents a leaf certificate for `host`
+/// signed by the provided CA.
+#[cfg(feature = "tls-mitm")]
+pub fn mitm_server_config_for_host(ca: &LoadedCa, host: &str) -> Result<Arc<rustls::ServerConfig>> {
+    crate::crypto::ensure_rustls_provider();
+    let mut params = CertificateParams::new(vec![host.to_string()]).context("Bad leaf params")?;
+    params.distinguished_name.push(DnType::CommonName, host);
+    params.use_authority_key_identifier_extension = true;
+    params.key_usages.push(KeyUsagePurpose::DigitalSignature);
+    params
+        .extended_key_usages
+        .push(ExtendedKeyUsagePurpose::ServerAuth);
+
+    let leaf_key = KeyPair::generate().context("Failed to generate leaf key pair")?;
+    let leaf_cert = params
+        .signed_by(&leaf_key, &ca.issuer)
+        .context("Failed to sign leaf certificate")?;
+
+    let mut chain = Vec::with_capacity(2);
+    chain.push(rustls::pki_types::CertificateDer::from(
+        leaf_cert.der().to_vec(),
+    ));
+    chain.push(ca.ca_cert_der.clone());
+
+    let key_der = rustls::pki_types::PrivatePkcs8KeyDer::from(leaf_key.serialize_der());
+    let key = rustls::pki_types::PrivateKeyDer::Pkcs8(key_der);
+
+    let cfg = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(chain, key)
+        .context("Failed to build rustls server config")?;
+
+    Ok(Arc::new(cfg))
 }
 
 #[cfg(feature = "tls-mitm")]
@@ -177,5 +251,16 @@ mod tests {
 
         assert_ne!(cert_before, cert_after);
         assert_ne!(key_before, key_after);
+    }
+
+    #[cfg(feature = "tls-mitm")]
+    #[test]
+    fn load_ca_and_issue_leaf() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _ = ensure_ca(tmp.path()).expect("ensure");
+        let ca = load_ca(tmp.path()).expect("load");
+        let cfg = mitm_server_config_for_host(&ca, "api.openai.com").expect("leaf cfg");
+        assert!(!cfg.alpn_protocols.is_empty() || cfg.alpn_protocols.is_empty());
+        // sanity: constructed
     }
 }

@@ -14,5 +14,7 @@ mod data {
 }
 
 pub fn get(package: &str) -> Option<&'static EmbeddedModel> {
-    data::EMBEDDED_MODELS.iter().find(|entry| entry.package == package)
+    data::EMBEDDED_MODELS
+        .iter()
+        .find(|entry| entry.package == package)
 }

@@ -41,10 +41,8 @@ const CLASS_MAP_CANONICAL_5: [ClassifierVerdict; 5] = [
     ClassifierVerdict::Malicious,
 ];
 
-const CLASS_MAP_SAFE_INJECTION: [ClassifierVerdict; 2] = [
-    ClassifierVerdict::Safe,
-    ClassifierVerdict::Injection,
-];
+const CLASS_MAP_SAFE_INJECTION: [ClassifierVerdict; 2] =
+    [ClassifierVerdict::Safe, ClassifierVerdict::Injection];
 
 const PACKAGE_PROTECTAI_DEBERTA_V3_BASE_PROMPT_INJECTION: ClassifierPackageSpec =
     ClassifierPackageSpec {

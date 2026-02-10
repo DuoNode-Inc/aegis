@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 
-use super::classifier::{ClassifierVerdict};
+use super::classifier::ClassifierVerdict;
 
 /// Local LLM classifier result.
 #[derive(Debug, Clone)]
@@ -102,11 +102,11 @@ mod llama_local {
 
     use anyhow::{Context, Result};
     use llama_cpp_2::context::params::LlamaContextParams;
+    use llama_cpp_2::json_schema_to_grammar;
     use llama_cpp_2::llama_backend::LlamaBackend;
     use llama_cpp_2::llama_batch::LlamaBatch;
     use llama_cpp_2::model::{AddBos, LlamaChatMessage, LlamaChatTemplate, LlamaModel};
     use llama_cpp_2::sampling::LlamaSampler;
-    use llama_cpp_2::json_schema_to_grammar;
     use serde::Deserialize;
 
     /// JSON output contract from the LLM.
@@ -168,10 +168,7 @@ Return a confidence from 0 to 1 and a short reason. Output JSON only."#
             max_tokens: usize,
         ) -> Result<Self> {
             if !model_path.exists() {
-                return Err(anyhow!(
-                    "LLM GGUF does not exist: {}",
-                    model_path.display()
-                ));
+                return Err(anyhow!("LLM GGUF does not exist: {}", model_path.display()));
             }
 
             let backend = backend()?;
