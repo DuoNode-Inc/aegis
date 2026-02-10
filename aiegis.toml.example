@@ -86,8 +86,8 @@ model_path = "models/llm/model.gguf"
 n_ctx = 2048
 # Threads for llama.cpp inference
 threads = 4
-# Max tokens to generate for the JSON verdict (~10 tokens needed; short-circuit)
-max_tokens = 16
+# Max tokens for JSON verdict (grammar + early parse stop terminates sooner)
+max_tokens = 48
 # Minimum confidence required to apply the LLM verdict
 confidence_threshold = 0.80
 

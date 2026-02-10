@@ -30,6 +30,10 @@ This repo supports three build flavors (all inference is local; NO CLOUD):
 Optional (Developer): embed selected model packages into the binary at build time:
 - Build: `AIEGIS_EMBED_PACKAGES=meta_prompt_guard_86m cargo build --release --features "tls-mitm,neural,embed-models"`
 
+Optional (Sentinel): embed GGUF LLM weights into the binary at build time (single-file distribution):
+- Build: `AIEGIS_EMBED_LLM_GGUF_PATH=/abs/path/to/model.gguf cargo build --release --features "tls-mitm,neural,llm-local,embed-llm-weights"`
+- Runtime: if `detection.llm.model_path` is missing, the binary will fall back to the embedded GGUF automatically.
+
 ### Capabilities Matrix (Accurate)
 
 Build features determine what code paths exist in the binary. The **runtime tier** (`shield`/`developer`/`sentinel`) gates which features can be enabled via config or license.
@@ -41,7 +45,7 @@ Build features determine what code paths exist in the binary. The **runtime tier
 | Forward proxy HTTPS inspection (CONNECT MITM) | No | Yes (tls-mitm build + CA trust) | Yes (tls-mitm build + CA trust) |
 | Rules engine (injection + PII + entropy) | Yes | Yes | Yes |
 | ONNX classifier escalation | No | Yes (neural build) | Yes (neural build) |
-| Local LLM escalation (GGUF/llama.cpp) | No | No | Yes (llm-local build + GGUF on disk) |
+| Local LLM escalation (GGUF/llama.cpp) | No | No | Yes (llm-local build + GGUF on disk or embedded) |
 
 ## Quickstart
 
@@ -77,6 +81,7 @@ aiegis logs [--tail N] [--follow]
 aiegis rules list
 aiegis rules test "your test string here"
 aiegis llm status [--verify]
+aiegis llm bench [--iters N] [--warmup N] [--input "..."] [--json]
 ```
 
 ## Supported AI Providers

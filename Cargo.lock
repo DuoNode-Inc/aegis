@@ -43,6 +43,7 @@ dependencies = [
  "hyper-rustls",
  "hyper-util",
  "llama-cpp-2",
+ "llama-cpp-sys-2",
  "ort",
  "predicates",
  "rcgen",

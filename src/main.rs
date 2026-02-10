@@ -315,6 +315,10 @@ async fn main() -> Result<()> {
                 println!("Aiegis Local LLM Status");
                 println!("─────────────────────────────────");
                 println!("Built with llm-local: {}", cfg!(feature = "llm-local"));
+                println!(
+                    "Built with embed-llm-weights: {}",
+                    cfg!(feature = "embed-llm-weights")
+                );
                 println!("Enabled in config:    {}", config.detection.llm.enabled);
                 println!(
                     "Model path:           {}",
@@ -328,6 +332,14 @@ async fn main() -> Result<()> {
                         "no"
                     }
                 );
+                #[cfg(feature = "embed-llm-weights")]
+                {
+                    println!(
+                        "Embedded model:       {} ({} bytes)",
+                        detection::embedded_llm::name(),
+                        detection::embedded_llm::len()
+                    );
+                }
                 println!(
                     "System prompt:        {}",
                     config
@@ -347,16 +359,89 @@ async fn main() -> Result<()> {
                 );
 
                 if verify {
-                    if !config.detection.llm.model_path.exists() {
-                        println!("Verify:               SKIPPED (GGUF missing)");
-                    } else {
-                        match detection::llm::verify_llm_model_loadable(
-                            &config.detection.llm.model_path,
-                        ) {
-                            Ok(()) => println!("Verify:               OK (model load succeeded)"),
-                            Err(e) => println!("Verify:               FAILED ({e})"),
-                        }
+                    match detection::llm::verify_llm_model_loadable(&config.detection.llm.model_path)
+                    {
+                        Ok(()) => println!("Verify:               OK (model load succeeded)"),
+                        Err(e) => println!("Verify:               FAILED ({e})"),
                     }
+                }
+            }
+
+            LlmAction::Bench {
+                iters,
+                warmup,
+                input,
+                json,
+            } => {
+                // Benchmark should work even if the config doesn't have llm.enabled set.
+                // It uses local inference only.
+                let llm = build_llm_classifier(
+                    true,
+                    &config.detection.llm.model_path,
+                    config.detection.llm.system_prompt_path.as_deref(),
+                    config.detection.llm.threads,
+                    config.detection.llm.n_ctx,
+                    config.detection.llm.max_tokens,
+                )?
+                .ok_or_else(|| anyhow::anyhow!("Failed to build local LLM classifier"))?;
+
+                // Warmup.
+                for _ in 0..warmup {
+                    let _ = llm.classify(&input, detection::llm::LlmScanContext::Request)?;
+                }
+
+                let mut samples_us: Vec<u128> = Vec::with_capacity(iters);
+                for _ in 0..iters {
+                    let t0 = std::time::Instant::now();
+                    let _ = llm.classify(&input, detection::llm::LlmScanContext::Request)?;
+                    samples_us.push(t0.elapsed().as_micros());
+                }
+
+                samples_us.sort_unstable();
+                let min = *samples_us.first().unwrap_or(&0);
+                let max = *samples_us.last().unwrap_or(&0);
+
+                let pct = |p: f64| -> u128 {
+                    if samples_us.is_empty() {
+                        return 0;
+                    }
+                    let idx = ((samples_us.len() as f64 - 1.0) * p).round() as usize;
+                    samples_us[idx.min(samples_us.len() - 1)]
+                };
+
+                let p50 = pct(0.50);
+                let p95 = pct(0.95);
+
+                if json {
+                    let out = serde_json::json!({
+                        "iters": iters,
+                        "warmup": warmup,
+                        "unit": "us",
+                        "min": min,
+                        "p50": p50,
+                        "p95": p95,
+                        "max": max,
+                        "features": {
+                            "llm_local": cfg!(feature = "llm-local"),
+                            "embed_llm_weights": cfg!(feature = "embed-llm-weights"),
+                        },
+                        "llm": {
+                            "model_path": config.detection.llm.model_path.display().to_string(),
+                            "n_ctx": config.detection.llm.n_ctx,
+                            "threads": config.detection.llm.threads,
+                            "max_tokens": config.detection.llm.max_tokens,
+                        }
+                    });
+                    println!("{}", serde_json::to_string_pretty(&out)?);
+                } else {
+                    println!("Aiegis Local LLM Benchmark");
+                    println!("─────────────────────────────────");
+                    println!("iters:    {iters} (warmup: {warmup})");
+                    println!("unit:     microseconds");
+                    println!("min:      {min}");
+                    println!("p50:      {p50}");
+                    println!("p95:      {p95}");
+                    println!("max:      {max}");
                 }
             }
         },

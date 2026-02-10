@@ -84,7 +84,23 @@ fn build_enabled_llm_classifier(
 /// CLI helper: verify a GGUF model is loadable (feature-gated).
 #[cfg(feature = "llm-local")]
 pub fn verify_llm_model_loadable(model_path: &Path) -> Result<()> {
-    llama_local::LlamaLocalClassifier::verify_loadable(model_path)
+    if model_path.exists() {
+        return llama_local::LlamaLocalClassifier::verify_loadable(model_path);
+    }
+
+    #[cfg(feature = "embed-llm-weights")]
+    {
+        // If the disk model is missing, fall back to the embedded GGUF.
+        // This keeps `llm status --verify` useful for single-file binaries.
+        llama_local::LlamaLocalClassifier::verify_embedded_loadable()
+    }
+    #[cfg(not(feature = "embed-llm-weights"))]
+    {
+        Err(anyhow!(
+            "LLM GGUF does not exist: {}",
+            model_path.display()
+        ))
+    }
 }
 
 #[cfg(not(feature = "llm-local"))]
@@ -98,9 +114,10 @@ pub fn verify_llm_model_loadable(_model_path: &Path) -> Result<()> {
 mod llama_local {
     use super::*;
     use std::num::NonZeroU32;
-    use std::sync::OnceLock;
+    use std::sync::{Mutex, OnceLock};
 
     use anyhow::{Context, Result};
+    use llama_cpp_2::context::LlamaContext;
     use llama_cpp_2::context::params::LlamaContextParams;
     use llama_cpp_2::json_schema_to_grammar;
     use llama_cpp_2::llama_backend::LlamaBackend;
@@ -125,7 +142,26 @@ mod llama_local {
             LlamaBackend::init().map_err(|e| format!("Failed to init llama backend: {e:?}"))
         });
         match res {
-            Ok(b) => Ok(b),
+            Ok(b) => {
+                // Silence llama.cpp logging by default; it is extremely verbose and
+                // will flood stderr during benchmarks and normal runs.
+                //
+                // Opt back in for debugging by setting `AIEGIS_LLAMA_LOG=1`.
+                static LOG_SILENCED: OnceLock<()> = OnceLock::new();
+                if std::env::var_os("AIEGIS_LLAMA_LOG").is_none() {
+                    LOG_SILENCED.get_or_init(|| unsafe {
+                        extern "C" fn quiet_log_cb(
+                            _level: llama_cpp_sys_2::ggml_log_level,
+                            _text: *const std::ffi::c_char,
+                            _user_data: *mut std::ffi::c_void,
+                        ) {
+                        }
+                        llama_cpp_sys_2::llama_log_set(Some(quiet_log_cb), std::ptr::null_mut());
+                    });
+                }
+
+                Ok(b)
+            }
             Err(msg) => Err(anyhow!("{msg}")),
         }
     }
@@ -150,23 +186,89 @@ Classify the provided text into one of: safe, injection, jailbreak, pii, malicio
 Return a confidence from 0 to 1 and a short reason. Output JSON only."#
     }
 
-    /// Cached KV state for the fixed system prompt prefix.
-    /// Avoids re-evaluating the system prompt on every classify() call.
+    /// Prefix KV cache: pre-evaluated system prompt saved as a llama.cpp session file.
+    ///
+    /// At init, we create a temporary context, evaluate the system prompt tokens,
+    /// and save the resulting KV cache state to a session file via `save_session_file`.
+    /// On each classify() call, a fresh context loads this session file (restoring
+    /// the KV state in ~1-2ms) instead of re-evaluating ~200 prefix tokens (~5-8ms).
     struct PrefixCache {
-        /// Tokenized system prompt prefix (everything before user content).
         tokens: Vec<llama_cpp_2::token::LlamaToken>,
+        /// Saved llama.cpp session file with pre-evaluated KV state.
+        session_path: std::path::PathBuf,
+    }
+
+    impl Drop for PrefixCache {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.session_path);
+        }
     }
 
     pub(super) struct LlamaLocalClassifier {
-        model: LlamaModel,
+        ctx: Mutex<ThreadUnsafeCtx>,
+        model: Box<LlamaModel>,
         chat_template: LlamaChatTemplate,
         grammar: String,
-        threads: i32,
-        n_ctx: u32,
         max_tokens: usize,
         system_prompt: String,
-        /// Pre-tokenized prefix for KV cache reuse across requests.
+        #[cfg(feature = "embed-llm-weights")]
+        _embedded_weights_file: Option<EmbeddedWeightsFile>,
+        /// Session-backed prefix KV cache (system prompt pre-evaluated at startup).
         prefix_cache: PrefixCache,
+    }
+
+    // `llama.cpp` contexts are not thread-safe for concurrent use. We enforce single-threaded
+    // access via a mutex, but still need to allow the context to live behind an `Arc<dyn LlmClassifier>`.
+    // This wrapper marks the context as `Send` so the outer classifier can be `Sync`.
+    struct ThreadUnsafeCtx(LlamaContext<'static>);
+    unsafe impl Send for ThreadUnsafeCtx {}
+
+    #[cfg(feature = "embed-llm-weights")]
+    struct EmbeddedWeightsFile {
+        pub(super) path: std::path::PathBuf,
+    }
+
+    #[cfg(feature = "embed-llm-weights")]
+    impl Drop for EmbeddedWeightsFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+
+    #[cfg(feature = "embed-llm-weights")]
+    fn materialize_embedded_gguf_to_temp() -> Result<EmbeddedWeightsFile> {
+        use std::io::Write;
+
+        // Write once per process; llama.cpp loads via mmap from a file path.
+        let out_path = std::env::temp_dir().join(format!(
+            "aiegis_embedded_gguf_{}_{}.gguf",
+            std::process::id(),
+            crate::detection::embedded_llm::name().replace('/', "_")
+        ));
+
+        // Avoid partial files if we crash during write.
+        let tmp_path = out_path.with_extension("gguf.tmp");
+
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&tmp_path)
+            .with_context(|| format!("Failed to create embedded GGUF temp file: {}", tmp_path.display()))?;
+
+        f.write_all(crate::detection::embedded_llm::bytes())
+            .context("Failed to write embedded GGUF bytes")?;
+        f.sync_all().ok();
+
+        std::fs::rename(&tmp_path, &out_path).with_context(|| {
+            format!(
+                "Failed to move embedded GGUF temp file into place: {} -> {}",
+                tmp_path.display(),
+                out_path.display()
+            )
+        })?;
+
+        Ok(EmbeddedWeightsFile { path: out_path })
     }
 
     impl LlamaLocalClassifier {
@@ -177,17 +279,39 @@ Return a confidence from 0 to 1 and a short reason. Output JSON only."#
             n_ctx: u32,
             max_tokens: usize,
         ) -> Result<Self> {
-            if !model_path.exists() {
-                return Err(anyhow!("LLM GGUF does not exist: {}", model_path.display()));
-            }
+            #[cfg(feature = "embed-llm-weights")]
+            let mut embedded_weights_file: Option<EmbeddedWeightsFile> = None;
+
+            let model_path = if model_path.exists() {
+                model_path.to_path_buf()
+            } else {
+                #[cfg(feature = "embed-llm-weights")]
+                {
+                    // If the configured path is missing, fall back to embedded weights so the
+                    // single-file binary "just works" in air-gapped deployments.
+                    let f = materialize_embedded_gguf_to_temp()?;
+                    let path = f.path.clone();
+                    embedded_weights_file = Some(f);
+                    path
+                }
+                #[cfg(not(feature = "embed-llm-weights"))]
+                {
+                    return Err(anyhow!(
+                        "LLM GGUF does not exist: {}",
+                        model_path.display()
+                    ));
+                }
+            };
 
             let backend = backend()?;
             // llama.cpp Metal offload has exhibited runtime instability on some macOS setups.
             // Default to CPU-only for now; we'll reintroduce configurable GPU offload once the
             // perf+stability profile is validated across devices.
             let model_params = LlamaModelParams::default().with_n_gpu_layers(0);
-            let model = LlamaModel::load_from_file(backend, model_path, &model_params)
-                .map_err(|e| anyhow!("Failed to load GGUF model: {e:?}"))?;
+            let model = Box::new(
+                LlamaModel::load_from_file(backend, &model_path, &model_params)
+                    .map_err(|e| anyhow!("Failed to load GGUF model: {e:?}"))?,
+            );
 
             let chat_template = model
                 .chat_template(None)
@@ -231,22 +355,79 @@ Return a confidence from 0 to 1 and a short reason. Output JSON only."#
                 .str_to_token(&prefix_prompt, AddBos::Never)
                 .map_err(|e| anyhow!("Failed to tokenize prefix: {e:?}"))?;
 
+            // Evaluate prefix tokens in a temporary context and persist the KV
+            // cache state to a session file.  Each classify() call restores this
+            // file (~1-2ms I/O) instead of re-running ~200 tokens through the
+            // transformer (~5-8ms compute).
+            let session_path = std::env::temp_dir()
+                .join(format!("aiegis_prefix_kv_{}.bin", std::process::id()));
+            let ctx_params = LlamaContextParams::default()
+                .with_n_ctx(NonZeroU32::new(n_ctx))
+                .with_n_threads(threads)
+                .with_n_threads_batch(threads);
+            let ctx = model
+                .new_context(backend, ctx_params)
+                .map_err(|e| anyhow!("Failed to create llama context: {e:?}"))?;
+            // SAFETY: we store the model in a Box so its address is stable for the entire
+            // lifetime of the classifier. The context contains a reference to the model;
+            // we extend its lifetime to 'static with the above guarantee.
+            let mut ctx: LlamaContext<'static> = unsafe { std::mem::transmute(ctx) };
+
+            // Build the prefix KV cache session file once at init, using the persistent context.
+            ctx.clear_kv_cache();
+            let mut init_batch = LlamaBatch::new(prefix_tokens.len(), 1);
+            for (i, tok) in prefix_tokens.iter().enumerate() {
+                init_batch
+                    .add(
+                        *tok,
+                        i as i32,
+                        &[0],
+                        i == prefix_tokens.len().saturating_sub(1),
+                    )
+                    .map_err(|e| anyhow!("Failed to add prefix init token: {e:?}"))?;
+            }
+            ctx.decode(&mut init_batch)
+                .map_err(|e| anyhow!("Failed to decode prefix for KV cache: {e:?}"))?;
+            ctx.save_session_file(&session_path, &prefix_tokens)
+                .map_err(|e| anyhow!("Failed to save prefix KV session: {e:?}"))?;
+            ctx.clear_kv_cache();
+
             Ok(Self {
+                ctx: Mutex::new(ThreadUnsafeCtx(ctx)),
                 model,
                 chat_template,
                 grammar,
-                threads,
-                n_ctx,
                 max_tokens,
                 system_prompt,
+                #[cfg(feature = "embed-llm-weights")]
+                _embedded_weights_file: embedded_weights_file,
                 prefix_cache: PrefixCache {
                     tokens: prefix_tokens,
+                    session_path,
                 },
             })
         }
 
+        #[cfg(feature = "embed-llm-weights")]
+        pub(super) fn verify_embedded_loadable() -> Result<()> {
+            let tmp = materialize_embedded_gguf_to_temp()?;
+            Self::verify_loadable(&tmp.path)
+        }
+
         pub fn verify_loadable(model_path: &Path) -> Result<()> {
-            let _ = Self::new(model_path, None, 4, 2048, 64)?;
+            if !model_path.exists() {
+                return Err(anyhow!(
+                    "LLM GGUF does not exist: {}",
+                    model_path.display()
+                ));
+            }
+            let backend = backend()?;
+            let model_params = LlamaModelParams::default().with_n_gpu_layers(0);
+            let model = LlamaModel::load_from_file(backend, model_path, &model_params)
+                .map_err(|e| anyhow!("Failed to load GGUF model: {e:?}"))?;
+            let _ = model
+                .chat_template(None)
+                .map_err(|e| anyhow!("Failed to load model chat template: {e:?}"))?;
             Ok(())
         }
 
@@ -293,15 +474,13 @@ Return a confidence from 0 to 1 and a short reason. Output JSON only."#
                 .map_err(|e| anyhow!("Failed to apply chat template (repair): {e:?}"))
         }
 
-        /// Generate JSON output using prefix KV cache optimization.
+        /// Generate JSON using session-file-backed prefix KV cache.
         ///
         /// Strategy:
-        /// 1. Eval the cached system prefix tokens (shared across all requests).
+        /// 1. Load the saved session file to restore KV state for the system prompt
+        ///    prefix (~1-2ms I/O vs ~5-8ms re-evaluation).
         /// 2. Eval only the variable user-content tokens (unique per request).
-        /// 3. Generate with grammar constraint, short-circuit on valid JSON.
-        ///
-        /// This avoids re-tokenizing and re-evaluating the system prompt on every call,
-        /// cutting latency by ~40-60% on warm requests.
+        /// 3. Generate with grammar constraint, short-circuit on valid JSON parse.
         fn generate_json(&self, prompt: &str) -> Result<String> {
             let debug_enabled = std::env::var_os("AIEGIS_LLM_DEBUG_STEPS").is_some();
             let mut step_i: u32 = 0;
@@ -312,19 +491,6 @@ Return a confidence from 0 to 1 and a short reason. Output JSON only."#
                 }
             };
 
-            let backend = backend()?;
-            step("backend()");
-            let ctx_params = LlamaContextParams::default()
-                .with_n_ctx(NonZeroU32::new(self.n_ctx))
-                .with_n_threads(self.threads)
-                .with_n_threads_batch(self.threads);
-
-            let mut ctx = self
-                .model
-                .new_context(backend, ctx_params)
-                .map_err(|e| anyhow!("Failed to create llama context: {e:?}"))?;
-            step("new_context()");
-
             let tokens = self
                 .model
                 .str_to_token(prompt, AddBos::Never)
@@ -334,54 +500,54 @@ Return a confidence from 0 to 1 and a short reason. Output JSON only."#
             }
             step("str_to_token()");
 
-            // Split tokens into prefix (cached) and variable (user content) portions.
-            // If the prompt starts with the same prefix tokens, skip re-evaluation.
+            let mut ctx = self.ctx.lock().expect("llm ctx mutex poisoned");
+            let ctx = &mut ctx.0;
+            step("ctx.lock()");
+            ctx.clear_kv_cache();
+            step("ctx.clear_kv_cache()");
+
+            // Try to restore prefix KV cache from the session file.
+            // If the prompt starts with our cached prefix tokens, load the pre-evaluated
+            // KV state and only eval the remaining variable (user content) tokens.
             let prefix_len = self.prefix_cache.tokens.len();
-            let (prefix_tokens, variable_tokens) = if tokens.len() > prefix_len
+            let (variable_tokens, start_pos) = if tokens.len() > prefix_len
                 && tokens[..prefix_len] == self.prefix_cache.tokens[..]
             {
-                (&tokens[..prefix_len], &tokens[prefix_len..])
+                // Prefix matches — restore KV cache from session file.
+                // This is the hot path: skips re-evaluating ~200 system prompt tokens.
+                ctx.load_session_file(&self.prefix_cache.session_path, prefix_len)
+                    .map_err(|e| anyhow!("Failed to load prefix KV session: {e:?}"))?;
+                step("load_session_file(prefix)");
+                let start = i32::try_from(prefix_len)
+                    .map_err(|_| anyhow!("Prefix length overflows i32"))?;
+                (&tokens[prefix_len..], start)
             } else {
-                // Fallback: treat entire prompt as variable (no prefix match).
-                (&tokens[..0], &tokens[..])
+                // No prefix match (e.g., repair prompt) — eval everything from scratch.
+                (&tokens[..], 0i32)
             };
 
-            // Total tokens to process.
-            let total_prompt_len = prefix_tokens.len() + variable_tokens.len();
-            let mut batch = LlamaBatch::new(total_prompt_len + self.max_tokens + 8, 1);
+            let mut batch =
+                LlamaBatch::new(variable_tokens.len() + self.max_tokens + 8, 1);
             step("LlamaBatch::new()");
 
-            // Phase 1: Eval prefix tokens (KV cache populated for system prompt).
-            let mut pos: i32 = 0;
-            if !prefix_tokens.is_empty() {
-                for tok in prefix_tokens.iter() {
-                    batch
-                        .add(*tok, pos, &[0], false)
-                        .map_err(|e| anyhow!("Failed to add prefix token: {e:?}"))?;
-                    pos += 1;
-                }
-                ctx.decode(&mut batch)
-                    .map_err(|e| anyhow!("Failed to decode prefix: {e:?}"))?;
-                batch.clear();
-                step("ctx.decode(prefix)");
-            }
-
-            // Phase 2: Eval variable tokens (user content — unique per request).
+            // Eval variable tokens (user content, or full prompt if no prefix match).
+            let mut pos = start_pos;
             for (i, tok) in variable_tokens.iter().enumerate() {
                 let logits = i == variable_tokens.len().saturating_sub(1);
                 batch
                     .add(*tok, pos, &[0], logits)
-                    .map_err(|e| anyhow!("Failed to add variable token: {e:?}"))?;
+                    .map_err(|e| anyhow!("Failed to add token: {e:?}"))?;
                 pos += 1;
             }
             ctx.decode(&mut batch)
-                .map_err(|e| anyhow!("Failed to decode variable tokens: {e:?}"))?;
+                .map_err(|e| anyhow!("Failed to decode tokens: {e:?}"))?;
             batch.clear();
             step("ctx.decode(variable)");
 
-            // Phase 3: Generate with grammar constraint.
-            let grammar_sampler = LlamaSampler::grammar(&self.model, &self.grammar, "root")
-                .map_err(|e| anyhow!("Failed to init grammar sampler: {e:?}"))?;
+            // Generate with grammar constraint.
+            let grammar_sampler =
+                LlamaSampler::grammar(self.model.as_ref(), &self.grammar, "root")
+                    .map_err(|e| anyhow!("Failed to init grammar sampler: {e:?}"))?;
             step("LlamaSampler::grammar()");
             let mut sampler = LlamaSampler::chain_simple([
                 grammar_sampler,
@@ -392,16 +558,12 @@ Return a confidence from 0 to 1 and a short reason. Output JSON only."#
             let mut decoder = encoding_rs::UTF_8.new_decoder();
             let mut out = String::new();
 
-            // llama.cpp sampler API convention: use `idx = -1` to sample from the logits of the
-            // last token evaluated by the most recent `decode()`.
-            //
-            // This avoids brittle bookkeeping around batch/output indices.
+            // llama.cpp sampler convention: idx = -1 samples from the last decoded token.
             let mut logits_i: i32 = -1;
 
             for _ in 0..self.max_tokens {
                 step("sampler.sample()");
                 let token = sampler.sample(&ctx, logits_i);
-                // llama.cpp uses -1 as "null token" (no valid sample).
                 if token.0 == -1 {
                     return Err(anyhow!(
                         "LLM sampler returned LLAMA_TOKEN_NULL (idx={})",

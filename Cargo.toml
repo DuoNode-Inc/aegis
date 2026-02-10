@@ -11,7 +11,8 @@ default = []
 tls-mitm = ["dep:rcgen"]
 neural = ["dep:ort", "dep:tokenizers"]
 embed-models = ["neural"]
-llm-local = ["dep:llama-cpp-2"]
+llm-local = ["dep:llama-cpp-2", "dep:llama-cpp-sys-2"]
+embed-llm-weights = ["llm-local"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -42,6 +43,7 @@ rcgen = { version = "0.14", optional = true, features = ["x509-parser"] }
 ort = { version = "2.0.0-rc.11", optional = true, default-features = false, features = ["std", "ndarray", "load-dynamic"] }
 tokenizers = { version = "0.22", optional = true, default-features = false, features = ["fancy-regex"] }
 llama-cpp-2 = { version = "0.1.133", optional = true, default-features = false, features = ["sampler"] }
+llama-cpp-sys-2 = { version = "0.1.133", optional = true }
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json"] }

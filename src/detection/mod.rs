@@ -3,6 +3,8 @@
 pub mod classifier;
 #[cfg(feature = "embed-models")]
 pub mod embedded;
+#[cfg(feature = "embed-llm-weights")]
+pub mod embedded_llm;
 pub mod entropy;
 pub mod injection;
 pub mod llm;

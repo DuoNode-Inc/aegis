@@ -117,6 +117,25 @@ pub enum LlmAction {
         #[arg(long)]
         verify: bool,
     },
+
+    /// Benchmark local LLM classification latency (no network; runs on-device).
+    Bench {
+        /// Number of measured iterations.
+        #[arg(long, default_value = "50")]
+        iters: usize,
+
+        /// Number of warmup iterations (not counted).
+        #[arg(long, default_value = "5")]
+        warmup: usize,
+
+        /// Input text to classify for the benchmark.
+        #[arg(long, default_value = "Summarize the following text: hello world")]
+        input: String,
+
+        /// Output a machine-readable JSON summary.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[cfg(feature = "tls-mitm")]

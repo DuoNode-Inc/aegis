@@ -251,9 +251,9 @@ fn default_llm_threads() -> i32 {
     4
 }
 fn default_llm_max_tokens() -> usize {
-    // Short-circuit: classifier only needs ~10-16 tokens for the JSON verdict.
-    // Reduced from 256 to minimize generation latency with Qwen3-0.6B.
-    16
+    // JSON verdict is typically ~20-30 tokens ({verdict, confidence, reason}).
+    // Grammar + early JSON parse stop terminates generation before hitting this cap.
+    48
 }
 fn default_llm_confidence_threshold() -> f64 {
     0.80
@@ -482,7 +482,7 @@ mod tests {
         );
         assert_eq!(config.detection.llm.n_ctx, 2048);
         assert_eq!(config.detection.llm.threads, 4);
-        assert_eq!(config.detection.llm.max_tokens, 16);
+        assert_eq!(config.detection.llm.max_tokens, 48);
         assert_eq!(config.detection.llm.confidence_threshold, 0.80);
         assert_eq!(config.detection.entropy.threshold, 5.5);
         assert_eq!(config.detection.entropy.min_length, 100);
