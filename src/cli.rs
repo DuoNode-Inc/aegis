@@ -65,12 +65,36 @@ pub enum Command {
         action: RulesAction,
     },
 
+    /// Manage license key
+    License {
+        #[command(subcommand)]
+        action: LicenseAction,
+    },
+
+    /// Local LLM tooling (Sentinel builds)
+    Llm {
+        #[command(subcommand)]
+        action: LlmAction,
+    },
+
     #[cfg(feature = "tls-mitm")]
     /// TLS tooling (Developer+ builds)
     Tls {
         #[command(subcommand)]
         action: TlsAction,
     },
+}
+
+#[derive(Subcommand)]
+pub enum LicenseAction {
+    /// Activate a license key
+    Activate {
+        /// The license key string
+        key: String,
+    },
+
+    /// Show current license status
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -82,6 +106,16 @@ pub enum RulesAction {
     Test {
         /// The text to test against all detectors
         input: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum LlmAction {
+    /// Show local LLM status (weights present, optionally verify load).
+    Status {
+        /// Attempt to load the GGUF model to verify it is usable.
+        #[arg(long)]
+        verify: bool,
     },
 }
 

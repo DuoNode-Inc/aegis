@@ -6,6 +6,7 @@ mod cli;
 mod config;
 mod detection;
 mod endpoints;
+mod license;
 mod logging;
 mod mode;
 mod proxy;
@@ -18,12 +19,13 @@ use std::io::{BufRead, BufReader, Seek, SeekFrom};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use cli::{Cli, Command, RulesAction};
+use cli::{Cli, Command, LicenseAction, LlmAction, RulesAction};
 #[cfg(feature = "tls-mitm")]
 use cli::{CaAction, TlsAction};
 use config::{apply_overrides, load_config};
 use detection::classifier::build_classifier;
 use detection::injection::InjectionScanner;
+use detection::llm::build_llm_classifier;
 use detection::model_package::resolve_classifier_config;
 use detection::pii::PiiScanner;
 use detection::pipeline::{Action, Pipeline, PipelineConfig};
@@ -68,10 +70,20 @@ fn build_pipeline(config: &config::AiegisConfig) -> Result<Pipeline> {
         &classifier_config.tokenizer_path,
     )?;
 
+    let llm = build_llm_classifier(
+        config.detection.llm.enabled,
+        &config.detection.llm.model_path,
+        config.detection.llm.system_prompt_path.as_deref(),
+        config.detection.llm.threads,
+        config.detection.llm.n_ctx,
+        config.detection.llm.max_tokens,
+    )?;
+
     Ok(Pipeline::new(
         injection,
         pii,
         classifier,
+        llm,
         PipelineConfig {
             injection_enabled: config.detection.injection.enabled,
             pii_enabled: config.detection.pii.enabled,
@@ -81,6 +93,8 @@ fn build_pipeline(config: &config::AiegisConfig) -> Result<Pipeline> {
             default_action,
             classifier_enabled: config.detection.classifier.enabled,
             classifier_threshold: classifier_config.confidence_threshold,
+            llm_enabled: config.detection.llm.enabled,
+            llm_threshold: config.detection.llm.confidence_threshold,
         },
     ))
 }
@@ -120,6 +134,24 @@ async fn main() -> Result<()> {
                 );
             }
 
+            if config.detection.llm.enabled {
+                tracing::info!(
+                    model_path = %config.detection.llm.model_path.display(),
+                    system_prompt_path = %config
+                        .detection
+                        .llm
+                        .system_prompt_path
+                        .as_ref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| "builtin".to_string()),
+                    n_ctx = config.detection.llm.n_ctx,
+                    threads = config.detection.llm.threads,
+                    max_tokens = config.detection.llm.max_tokens,
+                    threshold = config.detection.llm.confidence_threshold,
+                    "Local LLM configured"
+                );
+            }
+
             // Write PID file so status/stop can find us
             state::write_pid()?;
 
@@ -136,6 +168,7 @@ async fn main() -> Result<()> {
                 tier = resolved_tier.as_str(),
                 tier_tls_mitm = resolved_tier.allows_tls_mitm(),
                 tier_classifier = resolved_tier.allows_classifier(),
+                tier_llm = resolved_tier.allows_llm(),
                 tier_custom_patterns = resolved_tier.allows_custom_patterns(),
                 tier_rate_limiting = resolved_tier.allows_rate_limiting(),
                 tier_metrics = resolved_tier.allows_metrics(),
@@ -272,6 +305,121 @@ async fn main() -> Result<()> {
                 let pipeline = build_pipeline(&config)?;
                 let verdict = pipeline.scan(&input);
                 println!("{verdict}");
+            }
+        },
+
+        Command::Llm { action } => match action {
+            LlmAction::Status { verify } => {
+                println!("Aiegis Local LLM Status");
+                println!("─────────────────────────────────");
+                println!("Built with llm-local: {}", cfg!(feature = "llm-local"));
+                println!("Enabled in config:    {}", config.detection.llm.enabled);
+                println!("Model path:           {}", config.detection.llm.model_path.display());
+                println!(
+                    "Model present:        {}",
+                    if config.detection.llm.model_path.exists() {
+                        "yes"
+                    } else {
+                        "no"
+                    }
+                );
+                println!(
+                    "System prompt:        {}",
+                    config
+                        .detection
+                        .llm
+                        .system_prompt_path
+                        .as_ref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| "builtin".to_string())
+                );
+                println!("n_ctx:                {}", config.detection.llm.n_ctx);
+                println!("threads:              {}", config.detection.llm.threads);
+                println!("max_tokens:           {}", config.detection.llm.max_tokens);
+                println!(
+                    "confidence_threshold: {}",
+                    config.detection.llm.confidence_threshold
+                );
+
+                if verify {
+                    if !config.detection.llm.model_path.exists() {
+                        println!("Verify:               SKIPPED (GGUF missing)");
+                    } else {
+                        match detection::llm::verify_llm_model_loadable(
+                            &config.detection.llm.model_path,
+                        ) {
+                            Ok(()) => println!("Verify:               OK (model load succeeded)"),
+                            Err(e) => println!("Verify:               FAILED ({e})"),
+                        }
+                    }
+                }
+            }
+        },
+
+        Command::License { action } => match action {
+            LicenseAction::Activate { key } => {
+                let verifier = license::LicenseVerifier::new()
+                    .context("Failed to initialize license verifier")?;
+
+                match verifier.verify(&key) {
+                    Ok(claims) => {
+                        if claims.is_expired() {
+                            println!("License is EXPIRED (expired on {}).", claims.expiry);
+                            println!("Falling back to Shield tier.");
+                        } else {
+                            let path = license::save_license(&key)
+                                .context("Failed to save license key")?;
+                            println!("License activated successfully.");
+                            println!("  User:    {}", claims.user);
+                            println!("  Tier:    {}", claims.tier);
+                            println!("  Expires: {} ({} days remaining)", claims.expiry, claims.days_remaining());
+                            println!("  Saved:   {}", path.display());
+                        }
+                    }
+                    Err(e) => {
+                        println!("License verification FAILED: {e}");
+                        println!("Falling back to Shield tier.");
+                    }
+                }
+            }
+            LicenseAction::Status => {
+                println!("Aiegis License Status");
+                println!("─────────────────────────────────");
+
+                match license::load_license() {
+                    Ok(Some(key)) => {
+                        let verifier = license::LicenseVerifier::new()
+                            .context("Failed to initialize license verifier")?;
+                        match verifier.verify(&key) {
+                            Ok(claims) => {
+                                if claims.is_expired() {
+                                    println!("Status:  EXPIRED");
+                                    println!("User:    {}", claims.user);
+                                    println!("Tier:    {} (inactive)", claims.tier);
+                                    println!("Expired: {}", claims.expiry);
+                                    println!("Active:  Shield (fallback)");
+                                } else {
+                                    println!("Status:  VALID");
+                                    println!("User:    {}", claims.user);
+                                    println!("Tier:    {}", claims.tier);
+                                    println!("Expires: {} ({} days remaining)", claims.expiry, claims.days_remaining());
+                                }
+                            }
+                            Err(e) => {
+                                println!("Status:  INVALID ({e})");
+                                println!("Active:  Shield (fallback)");
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        println!("Status:  No license installed");
+                        println!("Active:  {} (default)", resolved_tier.as_str());
+                    }
+                    Err(e) => {
+                        println!("Status:  Error reading license ({e})");
+                        println!("Active:  Shield (fallback)");
+                    }
+                }
             }
         },
 

@@ -5,6 +5,7 @@ pub mod classifier;
 pub mod embedded;
 pub mod entropy;
 pub mod injection;
+pub mod llm;
 pub mod model_package;
 pub mod pii;
 pub mod pipeline;

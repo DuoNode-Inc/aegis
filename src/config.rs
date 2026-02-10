@@ -64,6 +64,8 @@ pub struct DetectionConfig {
     pub entropy: EntropyConfig,
     #[serde(default)]
     pub classifier: ClassifierConfig,
+    #[serde(default)]
+    pub llm: LlmConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -116,6 +118,31 @@ pub struct ClassifierConfig {
     #[serde(default = "default_classifier_tokenizer_path")]
     pub tokenizer_path: PathBuf,
     #[serde(default = "default_classifier_confidence_threshold")]
+    pub confidence_threshold: f64,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct LlmConfig {
+    /// Enable local LLM escalation (NO CLOUD). Requires a build with `--features llm-local`.
+    #[serde(default = "default_false")]
+    pub enabled: bool,
+    /// Path to GGUF weights on disk (bundled offline in production artifacts).
+    #[serde(default = "default_llm_model_path")]
+    pub model_path: PathBuf,
+    /// Optional system prompt file to load at startup ("policy-as-code" entrypoint).
+    #[serde(default)]
+    pub system_prompt_path: Option<PathBuf>,
+    /// llama.cpp context size (tokens). Keep within device RAM limits.
+    #[serde(default = "default_llm_n_ctx")]
+    pub n_ctx: u32,
+    /// llama.cpp threads to use for inference.
+    #[serde(default = "default_llm_threads")]
+    pub threads: i32,
+    /// Maximum tokens to generate for the JSON output.
+    #[serde(default = "default_llm_max_tokens")]
+    pub max_tokens: usize,
+    /// Minimum confidence required to apply the LLM verdict (otherwise remain AMBIGUOUS).
+    #[serde(default = "default_llm_confidence_threshold")]
     pub confidence_threshold: f64,
 }
 
@@ -203,6 +230,22 @@ fn default_classifier_model_path() -> PathBuf {
 fn default_classifier_tokenizer_path() -> PathBuf {
     PathBuf::from("models/neural-shield-tokenizer.json")
 }
+fn default_llm_model_path() -> PathBuf {
+    // Bundles copy GGUFs under models/llm/*.gguf by default.
+    PathBuf::from("models/llm/model.gguf")
+}
+fn default_llm_n_ctx() -> u32 {
+    2048
+}
+fn default_llm_threads() -> i32 {
+    4
+}
+fn default_llm_max_tokens() -> usize {
+    256
+}
+fn default_llm_confidence_threshold() -> f64 {
+    0.80
+}
 
 fn default_endpoints() -> Vec<String> {
     vec![
@@ -242,6 +285,7 @@ impl Default for DetectionConfig {
             pii: PiiConfig::default(),
             entropy: EntropyConfig::default(),
             classifier: ClassifierConfig::default(),
+            llm: LlmConfig::default(),
         }
     }
 }
@@ -293,6 +337,20 @@ impl Default for ClassifierConfig {
             model_path: default_classifier_model_path(),
             tokenizer_path: default_classifier_tokenizer_path(),
             confidence_threshold: default_classifier_confidence_threshold(),
+        }
+    }
+}
+
+impl Default for LlmConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_false(),
+            model_path: default_llm_model_path(),
+            system_prompt_path: None,
+            n_ctx: default_llm_n_ctx(),
+            threads: default_llm_threads(),
+            max_tokens: default_llm_max_tokens(),
+            confidence_threshold: default_llm_confidence_threshold(),
         }
     }
 }
@@ -396,6 +454,15 @@ mod tests {
             PathBuf::from("models/neural-shield-tokenizer.json")
         );
         assert_eq!(config.detection.classifier.confidence_threshold, 0.85);
+        assert!(!config.detection.llm.enabled);
+        assert_eq!(
+            config.detection.llm.model_path,
+            PathBuf::from("models/llm/model.gguf")
+        );
+        assert_eq!(config.detection.llm.n_ctx, 2048);
+        assert_eq!(config.detection.llm.threads, 4);
+        assert_eq!(config.detection.llm.max_tokens, 256);
+        assert_eq!(config.detection.llm.confidence_threshold, 0.80);
         assert_eq!(config.detection.entropy.threshold, 5.5);
         assert_eq!(config.detection.entropy.min_length, 100);
         assert_eq!(config.logging.format, "json");
@@ -492,6 +559,35 @@ confidence_threshold = 0.92
             PathBuf::from("models/custom/model.onnx")
         );
         assert_eq!(config.detection.classifier.confidence_threshold, 0.92);
+    }
+
+    #[test]
+    fn parse_llm_fields() {
+        let toml_str = r#"
+[detection.llm]
+enabled = true
+model_path = "models/llm/custom.gguf"
+system_prompt_path = "policies/healthcare/system.txt"
+n_ctx = 4096
+threads = 8
+max_tokens = 128
+confidence_threshold = 0.9
+"#;
+
+        let config: AiegisConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.detection.llm.enabled);
+        assert_eq!(
+            config.detection.llm.model_path,
+            PathBuf::from("models/llm/custom.gguf")
+        );
+        assert_eq!(
+            config.detection.llm.system_prompt_path,
+            Some(PathBuf::from("policies/healthcare/system.txt"))
+        );
+        assert_eq!(config.detection.llm.n_ctx, 4096);
+        assert_eq!(config.detection.llm.threads, 8);
+        assert_eq!(config.detection.llm.max_tokens, 128);
+        assert_eq!(config.detection.llm.confidence_threshold, 0.9);
     }
 
     #[test]

@@ -46,6 +46,7 @@ impl Tier {
 pub trait TierGate {
     fn allows_tls_mitm(&self) -> bool;
     fn allows_classifier(&self) -> bool;
+    fn allows_llm(&self) -> bool;
     fn allows_custom_patterns(&self) -> bool;
     fn allows_rate_limiting(&self) -> bool;
     fn allows_metrics(&self) -> bool;
@@ -59,6 +60,10 @@ impl TierGate for Tier {
 
     fn allows_classifier(&self) -> bool {
         matches!(self, Tier::Developer | Tier::Sentinel)
+    }
+
+    fn allows_llm(&self) -> bool {
+        matches!(self, Tier::Sentinel)
     }
 
     fn allows_custom_patterns(&self) -> bool {
@@ -78,12 +83,20 @@ impl TierGate for Tier {
     }
 }
 
-/// Resolve the active tier using optional config and runtime mode defaults.
+/// Resolve the active tier. Priority: config override > license key > runtime default.
 pub fn resolve_tier(config_tier: Option<&str>, mode: RuntimeMode) -> Result<Tier> {
-    match config_tier {
-        Some(raw) => Tier::parse(raw),
-        None => Ok(Tier::default_for_mode(mode)),
+    // 1. Explicit config override wins
+    if let Some(raw) = config_tier {
+        return Tier::parse(raw);
     }
+
+    // 2. Try installed license key
+    if let Some(licensed_tier) = crate::license::tier_from_license() {
+        return Ok(licensed_tier);
+    }
+
+    // 3. Fall back to runtime mode default
+    Ok(Tier::default_for_mode(mode))
 }
 
 /// Validate that enabled config features are allowed for the selected tier.
@@ -98,6 +111,13 @@ pub fn validate_tier_config(config: &AiegisConfig, tier: Tier) -> Result<()> {
     if config.detection.classifier.enabled && !tier.allows_classifier() {
         return Err(anyhow!(
             "Neural classifier is enabled but tier '{}' does not allow it",
+            tier.as_str()
+        ));
+    }
+
+    if config.detection.llm.enabled && !tier.allows_llm() {
+        return Err(anyhow!(
+            "Local LLM is enabled but tier '{}' does not allow it",
             tier.as_str()
         ));
     }
@@ -143,6 +163,14 @@ mod tests {
         config.proxy.tls_mitm.enabled = true;
         let err = validate_tier_config(&config, Tier::Shield).expect_err("must fail");
         assert!(err.to_string().contains("TLS MITM"));
+    }
+
+    #[test]
+    fn shield_rejects_llm() {
+        let mut config = AiegisConfig::default();
+        config.detection.llm.enabled = true;
+        let err = validate_tier_config(&config, Tier::Shield).expect_err("must fail");
+        assert!(err.to_string().contains("Local LLM"));
     }
 
     #[test]

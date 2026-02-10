@@ -12,6 +12,7 @@ use serde::Serialize;
 use super::classifier::{Classifier, ClassifierVerdict};
 use super::entropy;
 use super::injection::InjectionScanner;
+use super::llm::{LlmClassifier, LlmScanContext};
 use super::pii::PiiScanner;
 use super::tokenizer::build_classifier_input;
 
@@ -52,6 +53,8 @@ pub struct PipelineConfig {
     pub default_action: Action,
     pub classifier_enabled: bool,
     pub classifier_threshold: f64,
+    pub llm_enabled: bool,
+    pub llm_threshold: f64,
 }
 
 /// The detection pipeline. Built once at startup, reused for all requests.
@@ -59,6 +62,7 @@ pub struct Pipeline {
     injection: Option<InjectionScanner>,
     pii: Option<PiiScanner>,
     classifier: Option<Arc<dyn Classifier>>,
+    llm: Option<Arc<dyn LlmClassifier>>,
     config: PipelineConfig,
 }
 
@@ -68,12 +72,14 @@ impl Pipeline {
         injection: Option<InjectionScanner>,
         pii: Option<PiiScanner>,
         classifier: Option<Arc<dyn Classifier>>,
+        llm: Option<Arc<dyn LlmClassifier>>,
         config: PipelineConfig,
     ) -> Self {
         Self {
             injection,
             pii,
             classifier,
+            llm,
             config,
         }
     }
@@ -163,6 +169,7 @@ impl Pipeline {
                 };
 
                 self.apply_classifier_escalation(&mut verdict, input);
+                self.apply_llm_escalation(&mut verdict, input, context);
                 verdict.latency_us = start.elapsed().as_micros() as u64;
                 return verdict;
             }
@@ -215,6 +222,52 @@ impl Pipeline {
             ClassifierVerdict::Pii => self.config.default_action.clone(),
         };
     }
+
+    fn apply_llm_escalation(&self, verdict: &mut Verdict, input: &str, context: ScanContext) {
+        if !self.config.llm_enabled {
+            return;
+        }
+        if verdict.action != Action::Ambiguous {
+            return;
+        }
+
+        let Some(llm) = &self.llm else {
+            return;
+        };
+
+        let llm_context = match context {
+            ScanContext::Request => LlmScanContext::Request,
+            ScanContext::Response => LlmScanContext::Response,
+        };
+
+        let classified = match llm.classify(input, llm_context) {
+            Ok(r) => r,
+            Err(_) => {
+                // Fail-open to AMBIGUOUS when LLM errors.
+                return;
+            }
+        };
+
+        if classified.confidence < self.config.llm_threshold {
+            return;
+        }
+
+        verdict.detector = Some("llm".into());
+        verdict.confidence = classified.confidence;
+        verdict.reason = Some(format!(
+            "LLM verdict: {} (confidence {:.2}) — {}",
+            classified.verdict.as_str(),
+            classified.confidence,
+            classified.reason
+        ));
+        verdict.action = match classified.verdict {
+            ClassifierVerdict::Safe => Action::Pass,
+            ClassifierVerdict::Injection
+            | ClassifierVerdict::Jailbreak
+            | ClassifierVerdict::Malicious => Action::Block,
+            ClassifierVerdict::Pii => self.config.default_action.clone(),
+        };
+    }
 }
 
 impl std::fmt::Display for Action {
@@ -246,6 +299,7 @@ impl std::fmt::Display for Verdict {
 mod tests {
     use super::*;
     use crate::detection::classifier::{Classifier, ClassifierResult, ClassifierVerdict};
+    use crate::detection::llm::{LlmClassifier, LlmResult, LlmScanContext};
     use crate::detection::injection::InjectionScanner;
     use crate::detection::pii::PiiScanner;
     use crate::rules::loader::PiiRule;
@@ -269,6 +323,21 @@ mod tests {
         }
     }
 
+    struct MockLlm {
+        calls: Arc<AtomicUsize>,
+        response: Option<LlmResult>,
+    }
+
+    impl LlmClassifier for MockLlm {
+        fn classify(&self, _input: &str, _context: LlmScanContext) -> anyhow::Result<LlmResult> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            match &self.response {
+                Some(result) => Ok(result.clone()),
+                None => Err(anyhow::anyhow!("llm inference failed")),
+            }
+        }
+    }
+
     fn test_pipeline() -> Pipeline {
         test_pipeline_with_classifier(None, false, 0.85, Action::Block)
     }
@@ -277,6 +346,26 @@ mod tests {
         classifier: Option<Arc<dyn Classifier>>,
         classifier_enabled: bool,
         classifier_threshold: f64,
+        default_action: Action,
+    ) -> Pipeline {
+        test_pipeline_with_classifier_and_llm(
+            classifier,
+            None,
+            classifier_enabled,
+            classifier_threshold,
+            false,
+            0.0,
+            default_action,
+        )
+    }
+
+    fn test_pipeline_with_classifier_and_llm(
+        classifier: Option<Arc<dyn Classifier>>,
+        llm: Option<Arc<dyn LlmClassifier>>,
+        classifier_enabled: bool,
+        classifier_threshold: f64,
+        llm_enabled: bool,
+        llm_threshold: f64,
         default_action: Action,
     ) -> Pipeline {
         let injection = InjectionScanner::new(vec![
@@ -302,6 +391,7 @@ mod tests {
             Some(injection),
             Some(pii),
             classifier,
+            llm,
             PipelineConfig {
                 injection_enabled: true,
                 pii_enabled: true,
@@ -311,6 +401,8 @@ mod tests {
                 default_action,
                 classifier_enabled,
                 classifier_threshold,
+                llm_enabled,
+                llm_threshold,
             },
         )
     }
@@ -482,5 +574,48 @@ mod tests {
         let v = p.scan(&noisy);
         assert_eq!(v.action, Action::Flag);
         assert_eq!(v.detector.as_deref(), Some("classifier"));
+    }
+
+    #[test]
+    fn llm_only_on_ambiguous_path() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let llm = Arc::new(MockLlm {
+            calls: calls.clone(),
+            response: Some(LlmResult {
+                verdict: ClassifierVerdict::Malicious,
+                confidence: 0.95,
+                reason: "policy violation".into(),
+            }),
+        });
+        let p = test_pipeline_with_classifier_and_llm(None, Some(llm), false, 0.85, true, 0.85, Action::Block);
+
+        // Clean input should not invoke LLM.
+        let clean = p.scan("normal user text");
+        assert_eq!(clean.action, Action::Pass);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        // Entropy-based ambiguous input should invoke LLM.
+        let noisy = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".repeat(4);
+        let flagged = p.scan(&noisy);
+        assert_eq!(flagged.action, Action::Block);
+        assert_eq!(flagged.detector.as_deref(), Some("llm"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn llm_respects_confidence_threshold() {
+        let llm = Arc::new(MockLlm {
+            calls: Arc::new(AtomicUsize::new(0)),
+            response: Some(LlmResult {
+                verdict: ClassifierVerdict::Malicious,
+                confidence: 0.50,
+                reason: "low confidence".into(),
+            }),
+        });
+        let p = test_pipeline_with_classifier_and_llm(None, Some(llm), false, 0.85, true, 0.85, Action::Block);
+        let noisy = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".repeat(4);
+        let v = p.scan(&noisy);
+        assert_eq!(v.action, Action::Ambiguous);
+        assert_eq!(v.detector.as_deref(), Some("entropy"));
     }
 }

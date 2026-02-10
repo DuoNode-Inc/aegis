@@ -93,6 +93,7 @@ mod tests {
             Some(injection),
             Some(pii),
             None,
+            None,
             PipelineConfig {
                 injection_enabled: true,
                 pii_enabled: true,
@@ -102,6 +103,8 @@ mod tests {
                 default_action: Action::Block,
                 classifier_enabled: false,
                 classifier_threshold: 0.85,
+                llm_enabled: false,
+                llm_threshold: 0.0,
             },
         )
     }

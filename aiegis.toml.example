@@ -22,7 +22,7 @@ enabled = false
 ca_dir = ".aiegis/ca"
 
 [detection]
-# Default action when a threat is detected: "block" | "flag" | "log"
+# Default action when a threat is detected: "block" | "flag"
 default_action = "block"
 # Minimum confidence to trigger the default action (0.0 - 1.0)
 confidence_threshold = 0.8
@@ -66,6 +66,23 @@ model_path = "models/neural-shield.onnx"
 tokenizer_path = "models/neural-shield-tokenizer.json"
 # Confidence threshold for classifier actions
 confidence_threshold = 0.85
+
+[detection.llm]
+# Enable local LLM escalation on AMBIGUOUS verdicts (Sentinel tier).
+# NO CLOUD inference. No runtime downloads.
+enabled = false
+# Path to GGUF weights (bundled offline in production artifacts)
+model_path = "models/llm/model.gguf"
+# Optional system prompt file ("policy-as-code" entrypoint)
+# system_prompt_path = "policies/core/system_prompt.txt"
+# Context size in tokens
+n_ctx = 2048
+# Threads for llama.cpp inference
+threads = 4
+# Max tokens to generate for the JSON output
+max_tokens = 256
+# Minimum confidence required to apply the LLM verdict
+confidence_threshold = 0.80
 
 [logging]
 # Log format: "json" (structured, default) or "pretty" (human-readable)
