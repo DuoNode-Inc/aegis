@@ -12,6 +12,11 @@ tls-mitm = ["dep:rcgen"]
 neural = ["dep:ort", "dep:tokenizers"]
 embed-models = ["neural"]
 llm-local = ["dep:llama-cpp-2", "dep:llama-cpp-sys-2"]
+# GPU backends for llama.cpp (build-time only; runtime remains local).
+# - CUDA: Linux + NVIDIA GPUs (A100/T4/L4/etc)
+# - Metal: macOS + Apple Silicon (M-series)
+llm-cuda = ["llm-local", "llama-cpp-2/cuda"]
+llm-metal = ["llm-local", "llama-cpp-2/metal"]
 embed-llm-weights = ["llm-local"]
 
 [dependencies]

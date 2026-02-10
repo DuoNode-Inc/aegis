@@ -80,6 +80,13 @@ confidence_threshold = 0.85
 enabled = false
 # Path to GGUF weights (bundled offline in production artifacts)
 model_path = "models/llm/model.gguf"
+# Output contract mode:
+# - "json": strict JSON object (slower)
+# - "label": single label only (faster)
+output_mode = "json"
+# Number of transformer layers to offload to GPU (requires GPU-enabled build).
+# 0 = CPU-only.
+gpu_layers = 0
 # Optional system prompt file ("policy-as-code" entrypoint)
 # system_prompt_path = "policies/core/system_prompt.txt"
 # Context size in tokens

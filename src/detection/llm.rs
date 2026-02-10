@@ -3,9 +3,12 @@
 //! Feature gate: `llm-local`
 //! Backend: llama.cpp GGUF via `llama-cpp-2`
 //!
-//! Contract: the LLM must emit exactly one JSON object (no extra text). We enforce
-//! this using a JSON-schema-derived llama grammar and parse into the same
-//! `ClassifierVerdict` labels used by the ONNX classifier.
+//! Output contracts:
+//! - `json`: the LLM must emit exactly one JSON object (no extra text). We enforce
+//!   this using a JSON-schema-derived llama grammar and parse into the same
+//!   `ClassifierVerdict` labels used by the ONNX classifier.
+//! - `label`: the LLM must emit exactly one label only:
+//!   `safe|injection|jailbreak|pii|malicious` (fast path).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -35,10 +38,13 @@ pub enum LlmScanContext {
 }
 
 /// Build the local LLM classifier when enabled.
+#[allow(clippy::too_many_arguments)]
 pub fn build_llm_classifier(
     enabled: bool,
     model_path: &Path,
+    output_mode: &str,
     system_prompt_path: Option<&Path>,
+    gpu_layers: i32,
     threads: i32,
     n_ctx: u32,
     max_tokens: usize,
@@ -46,21 +52,38 @@ pub fn build_llm_classifier(
     if !enabled {
         return Ok(None);
     }
-    build_enabled_llm_classifier(model_path, system_prompt_path, threads, n_ctx, max_tokens)
-        .map(Some)
+    build_enabled_llm_classifier(
+        model_path,
+        output_mode,
+        system_prompt_path,
+        gpu_layers,
+        threads,
+        n_ctx,
+        max_tokens,
+    )
+    .map(Some)
 }
 
 #[cfg(feature = "llm-local")]
 fn build_enabled_llm_classifier(
     model_path: &Path,
+    output_mode: &str,
     system_prompt_path: Option<&Path>,
+    gpu_layers: i32,
     threads: i32,
     n_ctx: u32,
     max_tokens: usize,
 ) -> Result<Arc<dyn LlmClassifier>> {
+    if gpu_layers < 0 {
+        return Err(anyhow!(
+            "detection.llm.gpu_layers must be >= 0 (got {gpu_layers})"
+        ));
+    }
     Ok(Arc::new(llama_local::LlamaLocalClassifier::new(
         model_path,
+        output_mode,
         system_prompt_path,
+        gpu_layers,
         threads,
         n_ctx,
         max_tokens,
@@ -70,12 +93,22 @@ fn build_enabled_llm_classifier(
 #[cfg(not(feature = "llm-local"))]
 fn build_enabled_llm_classifier(
     model_path: &Path,
+    output_mode: &str,
     system_prompt_path: Option<&Path>,
+    gpu_layers: i32,
     threads: i32,
     n_ctx: u32,
     max_tokens: usize,
 ) -> Result<Arc<dyn LlmClassifier>> {
-    let _ = (model_path, system_prompt_path, threads, n_ctx, max_tokens);
+    let _ = (
+        model_path,
+        output_mode,
+        system_prompt_path,
+        gpu_layers,
+        threads,
+        n_ctx,
+        max_tokens,
+    );
     Err(anyhow!(
         "Local LLM is enabled in config, but this binary was built without the 'llm-local' feature. Rebuild with: cargo build --features llm-local"
     ))
@@ -126,6 +159,24 @@ mod llama_local {
     use llama_cpp_2::model::{AddBos, LlamaChatMessage, LlamaChatTemplate, LlamaModel};
     use llama_cpp_2::sampling::LlamaSampler;
     use serde::Deserialize;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum OutputMode {
+        Json,
+        Label,
+    }
+
+    impl OutputMode {
+        fn parse(s: &str) -> Result<Self> {
+            match s.to_ascii_lowercase().as_str() {
+                "json" => Ok(OutputMode::Json),
+                "label" => Ok(OutputMode::Label),
+                other => Err(anyhow!(
+                    "Unknown detection.llm.output_mode '{other}'. Expected: json|label"
+                )),
+            }
+        }
+    }
 
     /// JSON output contract from the LLM.
     #[derive(Debug, Clone, Deserialize)]
@@ -180,6 +231,14 @@ mod llama_local {
 }"#
     }
 
+    fn output_mode_label_grammar() -> &'static str {
+        // Strict grammar: allow whitespace + exactly one verdict label + whitespace.
+        r#"root ::= ws verdict ws
+ws ::= [ \t\n\r]*
+verdict ::= "safe" | "injection" | "jailbreak" | "pii" | "malicious"
+"#
+    }
+
     fn default_system_prompt() -> &'static str {
         r#"You are Aiegis, a local-only security classifier. Output exactly one JSON object.
 Classify the provided text into one of: safe, injection, jailbreak, pii, malicious.
@@ -211,6 +270,7 @@ Return a confidence from 0 to 1 and a short reason. Output JSON only."#
         grammar: String,
         max_tokens: usize,
         system_prompt: String,
+        output_mode: OutputMode,
         #[cfg(feature = "embed-llm-weights")]
         _embedded_weights_file: Option<EmbeddedWeightsFile>,
         /// Session-backed prefix KV cache (system prompt pre-evaluated at startup).
@@ -274,13 +334,17 @@ Return a confidence from 0 to 1 and a short reason. Output JSON only."#
     impl LlamaLocalClassifier {
         pub fn new(
             model_path: &Path,
+            output_mode: &str,
             system_prompt_path: Option<&Path>,
+            gpu_layers: i32,
             threads: i32,
             n_ctx: u32,
             max_tokens: usize,
         ) -> Result<Self> {
             #[cfg(feature = "embed-llm-weights")]
             let mut embedded_weights_file: Option<EmbeddedWeightsFile> = None;
+
+            let output_mode = OutputMode::parse(output_mode)?;
 
             let model_path = if model_path.exists() {
                 model_path.to_path_buf()
@@ -304,10 +368,12 @@ Return a confidence from 0 to 1 and a short reason. Output JSON only."#
             };
 
             let backend = backend()?;
-            // llama.cpp Metal offload has exhibited runtime instability on some macOS setups.
-            // Default to CPU-only for now; we'll reintroduce configurable GPU offload once the
-            // perf+stability profile is validated across devices.
-            let model_params = LlamaModelParams::default().with_n_gpu_layers(0);
+            // GPU offload is configured via `n_gpu_layers`. If the linked llama.cpp backend
+            // does not support GPU acceleration, llama.cpp will fall back to CPU.
+            let gpu_layers_u32 = u32::try_from(gpu_layers).map_err(|_| {
+                anyhow!("detection.llm.gpu_layers must fit in u32 (got {gpu_layers})")
+            })?;
+            let model_params = LlamaModelParams::default().with_n_gpu_layers(gpu_layers_u32);
             let model = Box::new(
                 LlamaModel::load_from_file(backend, &model_path, &model_params)
                     .map_err(|e| anyhow!("Failed to load GGUF model: {e:?}"))?,
@@ -317,8 +383,11 @@ Return a confidence from 0 to 1 and a short reason. Output JSON only."#
                 .chat_template(None)
                 .map_err(|e| anyhow!("Failed to load model chat template: {e:?}"))?;
 
-            let grammar = json_schema_to_grammar(output_schema_json())
-                .map_err(|e| anyhow!("Failed to convert JSON schema to grammar: {e:?}"))?;
+            let grammar = match output_mode {
+                OutputMode::Json => json_schema_to_grammar(output_schema_json())
+                    .map_err(|e| anyhow!("Failed to convert JSON schema to grammar: {e:?}"))?,
+                OutputMode::Label => output_mode_label_grammar().to_string(),
+            };
             if std::env::var_os("AIEGIS_LLM_DEBUG_GRAMMAR").is_some() {
                 let head = grammar
                     .lines()
@@ -339,10 +408,11 @@ Return a confidence from 0 to 1 and a short reason. Output JSON only."#
             // We build a "template prefix" using the system message alone so that
             // classify() only needs to tokenize + eval the variable user content.
             let prefix_prompt = {
-                let system_msg = format!(
-                    "{}\n\nYou are classifying a request payload.\nOutput JSON only.",
-                    &system_prompt
-                );
+                let output_directive = match output_mode {
+                    OutputMode::Json => "Output JSON only.",
+                    OutputMode::Label => "Output label only (safe|injection|jailbreak|pii|malicious).",
+                };
+                let system_msg = format!("{}\n\nYou are a security classifier.\n{}", &system_prompt, output_directive);
                 let messages = [
                     LlamaChatMessage::new("system".to_string(), system_msg)
                         .map_err(|e| anyhow!("Failed to create prefix chat message: {e:?}"))?,
@@ -399,6 +469,7 @@ Return a confidence from 0 to 1 and a short reason. Output JSON only."#
                 grammar,
                 max_tokens,
                 system_prompt,
+                output_mode,
                 #[cfg(feature = "embed-llm-weights")]
                 _embedded_weights_file: embedded_weights_file,
                 prefix_cache: PrefixCache {
@@ -437,14 +508,20 @@ Return a confidence from 0 to 1 and a short reason. Output JSON only."#
                 LlmScanContext::Response => "response",
             };
 
+            let output_directive = match self.output_mode {
+                OutputMode::Json => "Output JSON only.",
+                OutputMode::Label => "Output label only (safe|injection|jailbreak|pii|malicious).",
+            };
             let system = format!(
-                "{}\n\nYou are classifying a {} payload.\nOutput JSON only.",
-                self.system_prompt, context_label
+                "{}\n\nYou are a security classifier.\nSCAN_CONTEXT={}\n{}",
+                self.system_prompt, context_label, output_directive
             );
-                let user = format!(
-                    "TEXT_TO_CLASSIFY:\n{}\n\nReturn the JSON object now",
-                    input
-                );
+            let user = match self.output_mode {
+                OutputMode::Json => {
+                    format!("TEXT_TO_CLASSIFY:\n{}\n\nReturn the JSON object now", input)
+                }
+                OutputMode::Label => format!("TEXT_TO_CLASSIFY:\n{}\n\nReturn the label now", input),
+            };
 
             let messages = [
                 LlamaChatMessage::new("system".to_string(), system)?,
@@ -563,7 +640,7 @@ Return a confidence from 0 to 1 and a short reason. Output JSON only."#
 
             for _ in 0..self.max_tokens {
                 step("sampler.sample()");
-                let token = sampler.sample(&ctx, logits_i);
+                let token = sampler.sample(ctx, logits_i);
                 if token.0 == -1 {
                     return Err(anyhow!(
                         "LLM sampler returned LLAMA_TOKEN_NULL (idx={})",
@@ -582,9 +659,18 @@ Return a confidence from 0 to 1 and a short reason. Output JSON only."#
                 out.push_str(&piece);
                 step("token_to_piece()");
 
-                // Early stop once we have a parseable JSON object.
-                if try_parse_llm_json(&out).is_ok() {
-                    break;
+                // Early stop once we have a parseable output.
+                match self.output_mode {
+                    OutputMode::Json => {
+                        if try_parse_llm_json(&out).is_ok() {
+                            break;
+                        }
+                    }
+                    OutputMode::Label => {
+                        if ClassifierVerdict::parse(out.trim()).is_ok() {
+                            break;
+                        }
+                    }
                 }
 
                 batch
@@ -602,20 +688,32 @@ Return a confidence from 0 to 1 and a short reason. Output JSON only."#
         }
 
         fn parse_output(&self, raw: &str) -> Result<LlmResult> {
-            let parsed = try_parse_llm_json(raw)?;
-            if !(0.0..=1.0).contains(&parsed.confidence) {
-                return Err(anyhow!(
-                    "LLM returned invalid confidence {} (expected 0..=1)",
-                    parsed.confidence
-                ));
-            }
+            match self.output_mode {
+                OutputMode::Json => {
+                    let parsed = try_parse_llm_json(raw)?;
+                    if !(0.0..=1.0).contains(&parsed.confidence) {
+                        return Err(anyhow!(
+                            "LLM returned invalid confidence {} (expected 0..=1)",
+                            parsed.confidence
+                        ));
+                    }
 
-            let verdict = ClassifierVerdict::parse(&parsed.verdict)?;
-            Ok(LlmResult {
-                verdict,
-                confidence: parsed.confidence,
-                reason: parsed.reason,
-            })
+                    let verdict = ClassifierVerdict::parse(&parsed.verdict)?;
+                    Ok(LlmResult {
+                        verdict,
+                        confidence: parsed.confidence,
+                        reason: parsed.reason,
+                    })
+                }
+                OutputMode::Label => {
+                    let verdict = ClassifierVerdict::parse(raw.trim())?;
+                    Ok(LlmResult {
+                        verdict,
+                        confidence: 1.0,
+                        reason: "label-only".to_string(),
+                    })
+                }
+            }
         }
     }
 
@@ -635,7 +733,13 @@ Return a confidence from 0 to 1 and a short reason. Output JSON only."#
             match self.parse_output(&raw) {
                 Ok(r) => Ok(r),
                 Err(_) => {
-                    // Bounded repair attempt (still grammar-enforced).
+                    // Bounded repair attempt (still grammar-enforced). Only valid for JSON mode.
+                    if self.output_mode != OutputMode::Json {
+                        return Err(anyhow!(
+                            "LLM output failed to parse in label mode (raw='{}')",
+                            raw.trim()
+                        ));
+                    }
                     let repair_prompt = self.build_repair_prompt(&raw)?;
                     let repaired = self.generate_json(&repair_prompt)?;
                     self.parse_output(&repaired)

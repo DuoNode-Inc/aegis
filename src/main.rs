@@ -74,7 +74,9 @@ fn build_pipeline(config: &config::AiegisConfig) -> Result<Pipeline> {
     let llm = build_llm_classifier(
         config.detection.llm.enabled,
         &config.detection.llm.model_path,
+        &config.detection.llm.output_mode,
         config.detection.llm.system_prompt_path.as_deref(),
+        config.detection.llm.gpu_layers,
         config.detection.llm.threads,
         config.detection.llm.n_ctx,
         config.detection.llm.max_tokens,
@@ -378,7 +380,9 @@ async fn main() -> Result<()> {
                 let llm = build_llm_classifier(
                     true,
                     &config.detection.llm.model_path,
+                    &config.detection.llm.output_mode,
                     config.detection.llm.system_prompt_path.as_deref(),
+                    config.detection.llm.gpu_layers,
                     config.detection.llm.threads,
                     config.detection.llm.n_ctx,
                     config.detection.llm.max_tokens,
@@ -414,6 +418,11 @@ async fn main() -> Result<()> {
 
                 if json {
                     let out = serde_json::json!({
+                        "version": env!("CARGO_PKG_VERSION"),
+                        "platform": {
+                            "os": std::env::consts::OS,
+                            "arch": std::env::consts::ARCH,
+                        },
                         "iters": iters,
                         "warmup": warmup,
                         "unit": "us",
@@ -424,9 +433,20 @@ async fn main() -> Result<()> {
                         "features": {
                             "llm_local": cfg!(feature = "llm-local"),
                             "embed_llm_weights": cfg!(feature = "embed-llm-weights"),
+                            "llm_cuda": cfg!(feature = "llm-cuda"),
+                            "llm_metal": cfg!(feature = "llm-metal"),
                         },
                         "llm": {
                             "model_path": config.detection.llm.model_path.display().to_string(),
+                            "model_file": config
+                                .detection
+                                .llm
+                                .model_path
+                                .file_name()
+                                .map(|s| s.to_string_lossy().to_string())
+                                .unwrap_or_else(|| "".to_string()),
+                            "output_mode": config.detection.llm.output_mode.as_str(),
+                            "gpu_layers": config.detection.llm.gpu_layers,
                             "n_ctx": config.detection.llm.n_ctx,
                             "threads": config.detection.llm.threads,
                             "max_tokens": config.detection.llm.max_tokens,

@@ -51,7 +51,7 @@ pub struct ProxyConfig {
     pub tls_mitm: TlsMitmConfig,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
 pub struct UpstreamTlsConfig {
     /// Optional extra CA bundle PEM to trust for upstream TLS connections.
     /// Useful for testing with local self-signed upstreams or enterprise PKI roots.
@@ -139,6 +139,18 @@ pub struct LlmConfig {
     /// Path to GGUF weights on disk (bundled offline in production artifacts).
     #[serde(default = "default_llm_model_path")]
     pub model_path: PathBuf,
+    /// Output contract mode for the local LLM classifier.
+    ///
+    /// - `json`: strict JSON object `{verdict, confidence, reason}` (more tokens, slower)
+    /// - `label`: single label only (fast): `safe|injection|jailbreak|pii|malicious|ambiguous`
+    #[serde(default = "default_llm_output_mode")]
+    pub output_mode: String,
+    /// Number of layers to offload to the GPU (llama.cpp `n_gpu_layers`).
+    ///
+    /// - `0`: CPU-only
+    /// - `>0`: offload that many layers (requires a GPU-enabled build of llama.cpp)
+    #[serde(default = "default_llm_gpu_layers")]
+    pub gpu_layers: i32,
     /// Optional system prompt file to load at startup ("policy-as-code" entrypoint).
     #[serde(default)]
     pub system_prompt_path: Option<PathBuf>,
@@ -244,6 +256,12 @@ fn default_llm_model_path() -> PathBuf {
     // Bundles copy GGUFs under models/llm/*.gguf by default.
     PathBuf::from("models/llm/model.gguf")
 }
+fn default_llm_output_mode() -> String {
+    "json".into()
+}
+fn default_llm_gpu_layers() -> i32 {
+    0
+}
 fn default_llm_n_ctx() -> u32 {
     2048
 }
@@ -285,14 +303,6 @@ impl Default for ProxyConfig {
             tunnel_timeout_secs: default_tunnel_timeout_secs(),
             upstream_tls: UpstreamTlsConfig::default(),
             tls_mitm: TlsMitmConfig::default(),
-        }
-    }
-}
-
-impl Default for UpstreamTlsConfig {
-    fn default() -> Self {
-        Self {
-            extra_ca_bundle_path: None,
         }
     }
 }
@@ -367,6 +377,8 @@ impl Default for LlmConfig {
         Self {
             enabled: default_false(),
             model_path: default_llm_model_path(),
+            output_mode: default_llm_output_mode(),
+            gpu_layers: default_llm_gpu_layers(),
             system_prompt_path: None,
             n_ctx: default_llm_n_ctx(),
             threads: default_llm_threads(),
@@ -480,6 +492,8 @@ mod tests {
             config.detection.llm.model_path,
             PathBuf::from("models/llm/model.gguf")
         );
+        assert_eq!(config.detection.llm.output_mode, "json");
+        assert_eq!(config.detection.llm.gpu_layers, 0);
         assert_eq!(config.detection.llm.n_ctx, 2048);
         assert_eq!(config.detection.llm.threads, 4);
         assert_eq!(config.detection.llm.max_tokens, 48);
@@ -588,6 +602,8 @@ confidence_threshold = 0.92
 [detection.llm]
 enabled = true
 model_path = "models/llm/custom.gguf"
+output_mode = "json"
+gpu_layers = 0
 system_prompt_path = "policies/healthcare/system.txt"
 n_ctx = 4096
 threads = 8
@@ -601,6 +617,8 @@ confidence_threshold = 0.9
             config.detection.llm.model_path,
             PathBuf::from("models/llm/custom.gguf")
         );
+        assert_eq!(config.detection.llm.output_mode, "json");
+        assert_eq!(config.detection.llm.gpu_layers, 0);
         assert_eq!(
             config.detection.llm.system_prompt_path,
             Some(PathBuf::from("policies/healthcare/system.txt"))
