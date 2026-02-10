@@ -158,6 +158,7 @@ mod llama_local {
     use llama_cpp_2::model::params::LlamaModelParams;
     use llama_cpp_2::model::{AddBos, LlamaChatMessage, LlamaChatTemplate, LlamaModel};
     use llama_cpp_2::sampling::LlamaSampler;
+    use llama_cpp_2::token::logit_bias::LlamaLogitBias;
     use serde::Deserialize;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -232,8 +233,10 @@ mod llama_local {
     }
 
     fn output_mode_label_grammar() -> &'static str {
-        // Strict grammar: allow whitespace + exactly one verdict label + whitespace.
-        r#"root ::= ws verdict ws
+        // Strict grammar: require exactly one verdict label. Avoid leading whitespace,
+        // otherwise greedy sampling may emit only whitespace tokens and never reach
+        // the verdict within `max_tokens`.
+        r#"root ::= verdict ws
 ws ::= [ \t\n\r]*
 verdict ::= "safe" | "injection" | "jailbreak" | "pii" | "malicious"
 "#
@@ -626,8 +629,16 @@ Return a confidence from 0 to 1 and a short reason. Output JSON only."#
                 LlamaSampler::grammar(self.model.as_ref(), &self.grammar, "root")
                     .map_err(|e| anyhow!("Failed to init grammar sampler: {e:?}"))?;
             step("LlamaSampler::grammar()");
+
+            // Prevent the model from terminating generation before it produces a valid output.
+            // This matters most for label mode where an immediate EOS would yield an empty string.
+            let eos_bias = LlamaLogitBias::new(self.model.token_eos(), -100.0);
+            let bias_sampler = LlamaSampler::logit_bias(self.model.n_vocab(), &[eos_bias]);
+            step("LlamaSampler::logit_bias(eos)");
+
             let mut sampler = LlamaSampler::chain_simple([
                 grammar_sampler,
+                bias_sampler,
                 LlamaSampler::greedy(),
             ]);
             step("LlamaSampler::chain_simple()");
@@ -648,16 +659,23 @@ Return a confidence from 0 to 1 and a short reason. Output JSON only."#
                     ));
                 }
 
-                if self.model.is_eog_token(token) || token == self.model.token_eos() {
+                // Only hard-stop on EOS. Some models emit other "end of generation" tokens
+                // very early; in label mode that can yield an empty output. We therefore:
+                // - avoid decoding special EOG tokens to text
+                // - still feed them back into the context
+                // - rely on max_tokens + parse-based early-stop to terminate.
+                if token == self.model.token_eos() {
                     break;
                 }
 
-                let piece = self
-                    .model
-                    .token_to_piece(token, &mut decoder, false, None)
-                    .map_err(|e| anyhow!("Failed to decode token piece: {e:?}"))?;
-                out.push_str(&piece);
-                step("token_to_piece()");
+                if !self.model.is_eog_token(token) {
+                    let piece = self
+                        .model
+                        .token_to_piece(token, &mut decoder, false, None)
+                        .map_err(|e| anyhow!("Failed to decode token piece: {e:?}"))?;
+                    out.push_str(&piece);
+                    step("token_to_piece()");
+                }
 
                 // Early stop once we have a parseable output.
                 match self.output_mode {
