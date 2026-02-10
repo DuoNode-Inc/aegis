@@ -11,12 +11,15 @@ cargo build --release
 
 ## Build Profiles
 
-This repo supports two build flavors:
+This repo supports three build flavors (all inference is local; NO CLOUD):
 
 - **Shield (default)**: rules-only detection, no TLS MITM, no neural classifier.
   - Build: `cargo build --release`
 - **Developer (feature-gated)**: enables TLS MITM + local ONNX classifier (no cloud inference).
   - Build: `cargo build --release --features "tls-mitm,neural"`
+- **Enterprise (feature-gated)**: enables TLS MITM + ONNX + local LLM (llama.cpp GGUF).
+  - Build: `cargo build --release --features "tls-mitm,neural,llm-local"`
+  - Build dependency: `cmake` (used to build llama.cpp via `llama-cpp-sys-2`)
 
 Optional (Developer): embed selected model packages into the binary at build time:
 - Build: `AIEGIS_EMBED_PACKAGES=meta_prompt_guard_86m cargo build --release --features "tls-mitm,neural,embed-models"`
@@ -54,6 +57,7 @@ aiegis status
 aiegis logs [--tail N] [--follow]
 aiegis rules list
 aiegis rules test "your test string here"
+aiegis llm status [--verify]
 ```
 
 ## Supported AI Providers
@@ -79,7 +83,9 @@ aiegis rules test "your test string here"
 
 Pipeline short-circuits: if injection is detected, PII scan is skipped.
 
-If the rules pipeline returns **AMBIGUOUS**, Developer builds can optionally run a local classifier to escalate to PASS/BLOCK.
+If the rules pipeline returns **AMBIGUOUS**:
+- Developer builds can optionally run a local ONNX classifier to escalate to PASS/BLOCK.
+- Enterprise builds can optionally run a local LLM (GGUF) to resolve contextual cases.
 
 ## Proxy Modes
 
@@ -107,6 +113,18 @@ Neural classifier package profiles can be selected in config:
 enabled = true
 package = "meta_prompt_guard_86m"
 use_package_defaults = true
+```
+
+Local LLM escalation can be configured in Sentinel tier:
+
+```toml
+[runtime]
+tier = "sentinel"
+
+[detection.llm]
+enabled = true
+model_path = "models/llm/model.gguf"
+confidence_threshold = 0.80
 ```
 
 ### Model Packaging (Simple)
