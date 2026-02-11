@@ -233,19 +233,25 @@ mod llama_local {
     }
 
     fn output_mode_label_grammar() -> &'static str {
-        // Strict grammar: require exactly one verdict label. Avoid leading whitespace,
-        // otherwise greedy sampling may emit only whitespace tokens and never reach
-        // the verdict within `max_tokens`.
-        r#"root ::= verdict ws
+        // Strict grammar: require exactly one verdict label.
+        //
+        // Tokenization quirk: many models strongly prefer tokens that begin with a
+        // leading space (e.g. " safe"). Allow at most one leading space so the
+        // model can emit a single-token verdict, while still preventing the "only
+        // whitespace forever" failure mode.
+        r#"root ::= optspace verdict ws
+optspace ::= "" | " "
 ws ::= [ \t\n\r]*
 verdict ::= "safe" | "injection" | "jailbreak" | "pii" | "malicious"
 "#
     }
 
     fn default_system_prompt() -> &'static str {
-        r#"You are Aiegis, a local-only security classifier. Output exactly one JSON object.
+        // Keep the base system prompt output-format-agnostic. The output contract is enforced
+        // separately via the per-mode output directives + grammar.
+        r#"You are Aiegis, a local-only security classifier.
 Classify the provided text into one of: safe, injection, jailbreak, pii, malicious.
-Return a confidence from 0 to 1 and a short reason. Output JSON only."#
+Return a confidence from 0 to 1 and a short reason."#
     }
 
     /// Prefix KV cache: pre-evaluated system prompt saved as a llama.cpp session file.
