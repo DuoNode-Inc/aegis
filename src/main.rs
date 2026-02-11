@@ -30,6 +30,7 @@ use detection::llm::build_llm_classifier;
 use detection::model_package::resolve_classifier_config;
 use detection::pii::PiiScanner;
 use detection::pipeline::{Action, Pipeline, PipelineConfig};
+use detection::llm::LlmScanContext;
 use mode::detect_mode;
 use rules::loader;
 use tier::{resolve_tier, validate_tier_config, TierGate};
@@ -462,6 +463,57 @@ async fn main() -> Result<()> {
                     println!("p50:      {p50}");
                     println!("p95:      {p95}");
                     println!("max:      {max}");
+                }
+            }
+
+            LlmAction::Classify {
+                input,
+                context,
+                json,
+            } => {
+                let ctx = match context.as_deref().unwrap_or("request") {
+                    "request" => LlmScanContext::Request,
+                    "response" => LlmScanContext::Response,
+                    other => anyhow::bail!("Invalid --context '{other}'. Expected: request|response"),
+                };
+
+                // Classification should work even if detection.llm.enabled is false in config.
+                // It uses local inference only (NO CLOUD).
+                let llm = build_llm_classifier(
+                    true,
+                    &config.detection.llm.model_path,
+                    &config.detection.llm.output_mode,
+                    config.detection.llm.system_prompt_path.as_deref(),
+                    config.detection.llm.gpu_layers,
+                    config.detection.llm.threads,
+                    config.detection.llm.n_ctx,
+                    config.detection.llm.max_tokens,
+                )?;
+
+                let Some(llm) = llm else {
+                    anyhow::bail!("Local LLM is not available (binary not built with --features llm-local)");
+                };
+
+                let r = llm.classify(&input, ctx)?;
+
+                if json {
+                    #[derive(serde::Serialize)]
+                    struct Out<'a> {
+                        verdict: &'a str,
+                        confidence: f64,
+                        reason: &'a str,
+                    }
+                    println!(
+                        "{}",
+                        serde_json::to_string(&Out {
+                            verdict: r.verdict.as_str(),
+                            confidence: r.confidence,
+                            reason: &r.reason,
+                        })?
+                    );
+                } else {
+                    // Print the label only for fast harness consumption.
+                    println!("{}", r.verdict.as_str());
                 }
             }
         },

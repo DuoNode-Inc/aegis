@@ -136,6 +136,23 @@ pub enum LlmAction {
         #[arg(long)]
         json: bool,
     },
+
+    /// Classify a single input with the local LLM classifier (no network).
+    ///
+    /// This is intended for offline evaluation harnesses (e.g. PINT-style benchmarks).
+    Classify {
+        /// Input text to classify.
+        #[arg(long)]
+        input: String,
+
+        /// Scan context: request|response (defaults to request).
+        #[arg(long)]
+        context: Option<String>,
+
+        /// Output JSON (verdict/confidence/reason).
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[cfg(feature = "tls-mitm")]
