@@ -80,9 +80,29 @@ aiegis status
 aiegis logs [--tail N] [--follow]
 aiegis rules list
 aiegis rules test "your test string here"
+aiegis rules scan-deps [--repo .] [--staged] [--no-fail]
 aiegis llm status [--verify]
 aiegis llm bench [--iters N] [--warmup N] [--input "..."] [--json]
 ```
+
+### Automatic Package Gate (pre-commit)
+
+Use Aiegis to block suspicious dependency introductions before they land in git:
+
+```bash
+# from repo root
+cat > .git/hooks/pre-commit <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+aiegis rules scan-deps --repo . --staged
+EOF
+chmod +x .git/hooks/pre-commit
+```
+
+This gate blocks on high-severity findings, including:
+- suspicious dependency names (e.g., typo-squat indicators like `axos`)
+- dynamic code execution (`new Function`, `eval`)
+- obvious env exfil payloads (`...process.env` posted via `axios`/`fetch`)
 
 ## Supported AI Providers
 

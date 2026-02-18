@@ -1,7 +1,7 @@
 # Aiegis Testing Plan
 
 > **Extracted:** 2026-02-07
-> **Source:** Dev Session (Phase D1)
+> **Source:** Dev Session (Phase F, AIEGIS Module)
 
 ## Overview
 

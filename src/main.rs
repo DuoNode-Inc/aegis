@@ -30,7 +30,9 @@ use detection::llm::build_llm_classifier;
 use detection::model_package::resolve_classifier_config;
 use detection::pii::PiiScanner;
 use detection::pipeline::{Action, Pipeline, PipelineConfig};
+use detection::supply_chain::{scan_repo, ScanOptions, Severity};
 use detection::llm::LlmScanContext;
+use detection::web3::{Sensitivity as Web3Sensitivity, Web3Scanner};
 use mode::detect_mode;
 use rules::loader;
 use tier::{resolve_tier, validate_tier_config, TierGate};
@@ -83,14 +85,34 @@ fn build_pipeline(config: &config::AiegisConfig) -> Result<Pipeline> {
         config.detection.llm.max_tokens,
     )?;
 
-    Ok(Pipeline::new(
+    let web3_enabled = config.detection.web3.as_ref().map_or(false, |w| w.enabled);
+    let web3 = if web3_enabled {
+        let sensitivity = match config
+            .detection
+            .web3
+            .as_ref()
+            .map(|w| w.sensitivity.as_str())
+            .unwrap_or("normal")
+        {
+            "strict" => Web3Sensitivity::Strict,
+            "permissive" => Web3Sensitivity::Permissive,
+            _ => Web3Sensitivity::Normal,
+        };
+        Some(Web3Scanner::new(sensitivity))
+    } else {
+        None
+    };
+
+    Ok(Pipeline::with_web3(
         injection,
         pii,
+        web3,
         classifier,
         llm,
         PipelineConfig {
             injection_enabled: config.detection.injection.enabled,
             pii_enabled: config.detection.pii.enabled,
+            web3_enabled,
             entropy_enabled: config.detection.entropy.enabled,
             entropy_threshold: config.detection.entropy.threshold,
             entropy_min_length: config.detection.entropy.min_length,
@@ -310,6 +332,42 @@ async fn main() -> Result<()> {
                 let pipeline = build_pipeline(&config)?;
                 let verdict = pipeline.scan(&input);
                 println!("{verdict}");
+            }
+            RulesAction::ScanDeps {
+                repo,
+                staged,
+                no_fail,
+            } => {
+                let report = scan_repo(&ScanOptions {
+                    repo_path: repo,
+                    staged_only: staged,
+                })?;
+
+                println!("Aiegis Supply-Chain Scan");
+                println!("─────────────────────────────────");
+                println!("Scanned files: {}", report.scanned_files);
+                println!("Findings:      {}", report.findings.len());
+                println!("High severity: {}", report.high_count());
+
+                for finding in &report.findings {
+                    let sev = match finding.severity {
+                        Severity::High => "HIGH",
+                        Severity::Medium => "MEDIUM",
+                    };
+                    println!(
+                        "[{sev}] {}:{} {} - {}",
+                        finding.path.display(),
+                        finding.line,
+                        finding.category,
+                        finding.detail
+                    );
+                }
+
+                if report.high_count() > 0 && !no_fail {
+                    anyhow::bail!(
+                        "High-severity supply-chain findings detected. Blocking by default."
+                    );
+                }
             }
         },
 

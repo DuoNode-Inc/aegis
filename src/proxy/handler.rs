@@ -97,6 +97,7 @@ mod tests {
             PipelineConfig {
                 injection_enabled: true,
                 pii_enabled: true,
+                web3_enabled: false,
                 entropy_enabled: false,
                 entropy_threshold: 5.5,
                 entropy_min_length: 100,

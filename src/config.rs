@@ -71,11 +71,31 @@ pub struct DetectionConfig {
     #[serde(default)]
     pub pii: PiiConfig,
     #[serde(default)]
+    pub web3: Option<Web3Config>,
+    #[serde(default)]
     pub entropy: EntropyConfig,
     #[serde(default)]
     pub classifier: ClassifierConfig,
     #[serde(default)]
     pub llm: LlmConfig,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Web3Config {
+    #[serde(default = "default_false")]
+    pub enabled: bool,
+    /// Sensitivity mode: "strict", "normal", "permissive".
+    #[serde(default = "default_web3_sensitivity")]
+    pub sensitivity: String,
+}
+
+impl Default for Web3Config {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            sensitivity: default_web3_sensitivity(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -277,6 +297,10 @@ fn default_llm_confidence_threshold() -> f64 {
     0.80
 }
 
+fn default_web3_sensitivity() -> String {
+    "normal".into()
+}
+
 fn default_endpoints() -> Vec<String> {
     vec![
         "api.openai.com".into(),
@@ -314,6 +338,7 @@ impl Default for DetectionConfig {
             confidence_threshold: default_confidence(),
             injection: InjectionConfig::default(),
             pii: PiiConfig::default(),
+            web3: None,
             entropy: EntropyConfig::default(),
             classifier: ClassifierConfig::default(),
             llm: LlmConfig::default(),

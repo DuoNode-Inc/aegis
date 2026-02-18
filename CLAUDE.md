@@ -1,5 +1,7 @@
 # CLAUDE.md — Aiegis AI Firewall
 
+> **Source of Truth:** `../AI_RULES.md` (monorepo root)
+
 ## Identity
 
 You are building **Aiegis**, a Rust-based AI security proxy. Solo founder project by Chris Rijos (DuoNode Inc). This is real infrastructure shipping to real users. Not a tutorial. Not a prototype. Production-grade from commit one.

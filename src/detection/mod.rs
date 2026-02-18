@@ -11,4 +11,6 @@ pub mod llm;
 pub mod model_package;
 pub mod pii;
 pub mod pipeline;
+pub mod supply_chain;
 pub mod tokenizer;
+pub mod web3;

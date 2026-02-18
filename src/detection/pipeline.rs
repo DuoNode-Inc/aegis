@@ -15,6 +15,7 @@ use super::injection::InjectionScanner;
 use super::llm::{LlmClassifier, LlmScanContext};
 use super::pii::PiiScanner;
 use super::tokenizer::build_classifier_input;
+use super::web3::{Web3Action, Web3Scanner};
 
 /// The action to take on a request.
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -47,6 +48,7 @@ pub enum ScanContext {
 pub struct PipelineConfig {
     pub injection_enabled: bool,
     pub pii_enabled: bool,
+    pub web3_enabled: bool,
     pub entropy_enabled: bool,
     pub entropy_threshold: f64,
     pub entropy_min_length: usize,
@@ -61,6 +63,7 @@ pub struct PipelineConfig {
 pub struct Pipeline {
     injection: Option<InjectionScanner>,
     pii: Option<PiiScanner>,
+    web3: Option<Web3Scanner>,
     classifier: Option<Arc<dyn Classifier>>,
     llm: Option<Arc<dyn LlmClassifier>>,
     config: PipelineConfig,
@@ -78,6 +81,26 @@ impl Pipeline {
         Self {
             injection,
             pii,
+            web3: None,
+            classifier,
+            llm,
+            config,
+        }
+    }
+
+    /// Create a pipeline with all scanners including Web3.
+    pub fn with_web3(
+        injection: Option<InjectionScanner>,
+        pii: Option<PiiScanner>,
+        web3: Option<Web3Scanner>,
+        classifier: Option<Arc<dyn Classifier>>,
+        llm: Option<Arc<dyn LlmClassifier>>,
+        config: PipelineConfig,
+    ) -> Self {
+        Self {
+            injection,
+            pii,
+            web3,
             classifier,
             llm,
             config,
@@ -148,7 +171,30 @@ impl Pipeline {
             }
         }
 
-        // Stage 3: Entropy analysis
+        // Stage 3: Web3 JSON-RPC detection
+        if context == ScanContext::Request && self.config.web3_enabled {
+            if let Some(scanner) = &self.web3 {
+                let matches = scanner.scan(input);
+                if let Some(first) = matches.first() {
+                    let action = match first.action {
+                        Web3Action::Block => Action::Block,
+                        Web3Action::Flag => Action::Flag,
+                        Web3Action::Pass => Action::Pass,
+                    };
+                    if action != Action::Pass {
+                        return Verdict {
+                            action,
+                            detector: Some(first.detector.clone()),
+                            reason: Some(first.reason.clone()),
+                            confidence: 1.0,
+                            latency_us: start.elapsed().as_micros() as u64,
+                        };
+                    }
+                }
+            }
+        }
+
+        // Stage 4: Entropy analysis
         if self.config.entropy_enabled {
             let result = entropy::analyze(
                 input.as_bytes(),
@@ -395,6 +441,7 @@ mod tests {
             PipelineConfig {
                 injection_enabled: true,
                 pii_enabled: true,
+                web3_enabled: false,
                 entropy_enabled: true,
                 entropy_threshold: 5.5,
                 entropy_min_length: 100,

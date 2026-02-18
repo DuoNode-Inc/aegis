@@ -4,6 +4,8 @@
 
 use assert_cmd::Command;
 use predicates::prelude::*;
+use std::fs;
+use tempfile::tempdir;
 
 #[allow(deprecated)] // cargo_bin works fine, replacement macro is unstable
 fn aiegis() -> Command {
@@ -186,4 +188,52 @@ fn rules_test_reports_latency() {
         .assert()
         .success()
         .stdout(predicate::str::contains("latency:"));
+}
+
+#[test]
+fn rules_scan_deps_blocks_high_severity_findings() {
+    let tmp = tempdir().expect("tempdir");
+    fs::write(
+        tmp.path().join("package.json"),
+        r#"{
+  "dependencies": { "axos": "^0.0.1" }
+}"#,
+    )
+    .expect("write package");
+
+    aiegis()
+        .args([
+            "rules",
+            "scan-deps",
+            "--repo",
+            tmp.path().to_string_lossy().as_ref(),
+        ])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("High severity: 1"))
+        .stdout(predicate::str::contains("[HIGH]"));
+}
+
+#[test]
+fn rules_scan_deps_can_be_forced_non_blocking() {
+    let tmp = tempdir().expect("tempdir");
+    fs::write(
+        tmp.path().join("package.json"),
+        r#"{
+  "dependencies": { "axos": "^0.0.1" }
+}"#,
+    )
+    .expect("write package");
+
+    aiegis()
+        .args([
+            "rules",
+            "scan-deps",
+            "--repo",
+            tmp.path().to_string_lossy().as_ref(),
+            "--no-fail",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("High severity: 1"));
 }

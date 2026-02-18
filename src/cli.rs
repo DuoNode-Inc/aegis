@@ -107,6 +107,21 @@ pub enum RulesAction {
         /// The text to test against all detectors
         input: String,
     },
+
+    /// Scan a repository for suspicious package/dependency malware indicators
+    ScanDeps {
+        /// Repo path to scan (defaults to current directory)
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+
+        /// Scan only staged files (for pre-commit hooks)
+        #[arg(long)]
+        staged: bool,
+
+        /// Do not fail process exit when high-severity findings are present
+        #[arg(long)]
+        no_fail: bool,
+    },
 }
 
 #[derive(Subcommand)]
