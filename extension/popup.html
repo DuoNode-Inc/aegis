@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=360" />
+  <title>Aiegis</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      width: 360px; min-height: 400px;
+      background: #0C0C0C;
+      font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+      color: #FFFFFF;
+      overflow: hidden;
+    }
+
+    /* Header */
+    .hdr {
+      height: 52px; background: #080808;
+      border-bottom: 1px solid #2f2f2f;
+      display: flex; align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+    }
+    .hdr-l { display: flex; align-items: center; gap: 8px; }
+    .mark {
+      width: 24px; height: 24px; background: #00FF88;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700; color: #0C0C0C;
+    }
+    .logo { font-size: 13px; font-weight: 600; letter-spacing: 1px; }
+    .hdr-r { display: flex; align-items: center; gap: 8px; }
+    .tier-badge {
+      padding: 3px 8px; font-size: 9px; font-weight: 700;
+      background: #00FF8820; color: #00FF88;
+      border: 1px solid #00FF8840;
+    }
+    .toggle-wrap { position: relative; }
+    .toggle {
+      appearance: none; -webkit-appearance: none;
+      width: 36px; height: 20px; background: #00FF88;
+      border: none; cursor: pointer; position: relative;
+    }
+    .toggle::after {
+      content: ''; position: absolute;
+      right: 2px; top: 2px; width: 16px; height: 16px;
+      background: #0C0C0C; transition: right 0.15s;
+    }
+    .toggle:not(:checked) { background: #2f2f2f; }
+    .toggle:not(:checked)::after { right: 18px; }
+
+    /* Status bar */
+    .status-bar {
+      height: 36px; background: #0A0A0A;
+      border-bottom: 1px solid #2f2f2f;
+      display: flex; align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+    }
+    .status-l { display: flex; align-items: center; gap: 8px; }
+    .dot { width: 8px; height: 8px; background: #00FF88; }
+    .dot.inactive { background: #3a3a3a; }
+    .status-txt { font-size: 10px; font-weight: 700; color: #00FF88; }
+    .status-txt.inactive { color: #5a5a5a; }
+    .last-scan { font-size: 9px; color: #5a5a5a; }
+
+    /* Stats */
+    .stats {
+      display: flex; height: 84px;
+      border-bottom: 1px solid #2f2f2f;
+      background: #0A0A0A; gap: 1px;
+    }
+    .stat {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 4px;
+      border: 1px solid #2f2f2f;
+    }
+    .stat-n { font-size: 22px; font-weight: 700; letter-spacing: -1px; }
+    .stat-l { font-size: 9px; font-weight: 700; }
+    .stat.blocked { background: #FF444410; border-color: #FF4444; }
+    .stat.blocked .stat-n, .stat.blocked .stat-l { color: #FF4444; }
+    .stat.flagged { background: #FF880010; border-color: #FF8800; }
+    .stat.flagged .stat-n, .stat.flagged .stat-l { color: #FF8800; }
+    .stat.scanned .stat-n { color: #FFFFFF; }
+    .stat.scanned .stat-l { color: #8a8a8a; }
+
+    /* Feed */
+    .feed-hdr {
+      height: 32px; background: #080808;
+      border-bottom: 1px solid #2f2f2f;
+      display: flex; align-items: center; padding: 0 16px;
+    }
+    .feed-hdr-txt { font-size: 9px; font-weight: 700; letter-spacing: 1px; color: #5a5a5a; }
+
+    .event {
+      height: 52px; background: #0A0A0A;
+      border-bottom: 1px solid #2f2f2f;
+      display: flex; align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+    }
+    .event-l { display: flex; align-items: center; gap: 8px; }
+    .badge {
+      padding: 3px 6px; font-size: 9px; font-weight: 700;
+    }
+    .badge.block { background: #FF444420; color: #FF4444; border: 1px solid #FF4444; }
+    .badge.flag { background: #FF880015; color: #FF8800; border: 1px solid #FF8800; }
+    .badge.pass { background: #00FF8810; color: #00FF88; border: 1px solid #00FF8840; }
+    .badge.wallet { background: #8844FF20; color: #8844FF; border: 1px solid #8844FF; }
+    .event-info { display: flex; flex-direction: column; gap: 3px; }
+    .event-dest { font-size: 10px; font-weight: 600; }
+    .event-reason { font-size: 9px; color: #6a6a6a; }
+    .event-time { font-size: 9px; color: #3a3a3a; }
+    .empty-feed {
+      padding: 24px 16px; text-align: center;
+      font-size: 10px; color: #3a3a3a;
+    }
+
+    /* Upgrade box */
+    .upgrade-box {
+      padding: 16px;
+      background: #0D0D0D;
+      border-bottom: 1px solid #00FF8830;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .upgrade-title { font-size: 10px; font-weight: 700; color: #00FF88; }
+    .upgrade-sub { font-size: 9px; color: #5a5a5a; }
+    .upgrade-btn {
+      display: inline-block; padding: 6px 14px;
+      background: #00FF88; color: #0C0C0C;
+      font-family: inherit; font-size: 9px; font-weight: 700;
+      letter-spacing: 1px; border: none; cursor: pointer;
+      text-decoration: none;
+    }
+    .upgrade-btn:hover { background: #00DD77; }
+
+    /* Footer */
+    .footer {
+      height: 32px; background: #060606;
+      border-top: 1px solid #2f2f2f;
+      display: flex; align-items: center;
+      justify-content: space-between;
+      padding: 0 16px; position: sticky; bottom: 0;
+    }
+    .footer-l, .footer-r { font-size: 9px; color: #3a3a3a; }
+
+    /* Wallet section */
+    .section-hdr {
+      height: 32px; background: #080808;
+      border-bottom: 1px solid #2f2f2f;
+      display: flex; align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+    }
+    .section-hdr-txt { font-size: 9px; font-weight: 700; letter-spacing: 1px; color: #5a5a5a; }
+    .section-badge {
+      padding: 2px 6px; font-size: 8px; font-weight: 700;
+      background: #8844FF20; color: #8844FF;
+      border: 1px solid #8844FF40;
+    }
+  </style>
+</head>
+<body>
+  <div class="hdr">
+    <div class="hdr-l">
+      <div class="mark">A</div>
+      <span class="logo">AIEGIS</span>
+    </div>
+    <div class="hdr-r">
+      <span class="tier-badge" id="tier-badge">[SHIELD]</span>
+      <input type="checkbox" class="toggle" id="enabled-toggle" checked />
+    </div>
+  </div>
+
+  <div class="status-bar">
+    <div class="status-l">
+      <div class="dot" id="status-dot"></div>
+      <span class="status-txt" id="status-txt">ACTIVE</span>
+    </div>
+    <span class="last-scan" id="last-scan">—</span>
+  </div>
+
+  <div class="stats">
+    <div class="stat scanned">
+      <span class="stat-n" id="stat-scanned">0</span>
+      <span class="stat-l">SCANNED</span>
+    </div>
+    <div class="stat blocked">
+      <span class="stat-n" id="stat-blocked">0</span>
+      <span class="stat-l">BLOCKED</span>
+    </div>
+    <div class="stat flagged">
+      <span class="stat-n" id="stat-flagged">0</span>
+      <span class="stat-l">FLAGGED</span>
+    </div>
+  </div>
+
+  <div class="section-hdr">
+    <span class="section-hdr-txt">WALLET EVENTS</span>
+    <span class="section-badge">⬡ ETH</span>
+  </div>
+  <div id="wallet-feed">
+    <div class="empty-feed">No wallet signing events yet</div>
+  </div>
+
+  <div class="feed-hdr">
+    <span class="feed-hdr-txt">AI SCAN EVENTS</span>
+  </div>
+  <div id="ai-feed">
+    <div class="empty-feed">No events yet</div>
+  </div>
+
+  <div class="upgrade-box" id="upgrade-box">
+    <span class="upgrade-title">SENTINEL — Full 365 Classifier Pack</span>
+    <span class="upgrade-sub">Neural classifier · LLM escalation · TLS MITM · Custom rules</span>
+    <a class="upgrade-btn" href="https://aiegis.xyz" target="_blank">ACTIVATE SENTINEL — $19.99/mo</a>
+  </div>
+
+  <div class="footer">
+    <span class="footer-l">aiegis.xyz</span>
+    <span class="footer-r" id="footer-version">v0.2.0 · Shield</span>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
