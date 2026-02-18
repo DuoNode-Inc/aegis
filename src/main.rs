@@ -12,6 +12,7 @@ mod logging;
 mod mode;
 mod proxy;
 mod rules;
+mod sidecar;
 mod state;
 mod tier;
 mod tls;
@@ -23,6 +24,7 @@ use clap::Parser;
 #[cfg(feature = "tls-mitm")]
 use cli::{CaAction, TlsAction};
 use cli::{Cli, Command, LicenseAction, LlmAction, RulesAction};
+use sidecar::{Counters, SidecarState};
 use config::{apply_overrides, load_config};
 use detection::classifier::build_classifier;
 use detection::injection::InjectionScanner;
@@ -266,6 +268,32 @@ async fn main() -> Result<()> {
             let _ = state::remove_pid();
             result?;
         }
+        Command::Sidecar { host, port } => {
+            logging::init(&config.logging)?;
+
+            let mut config = config;
+            config.detection.injection.rules_path =
+                select_injection_rules_path(&config, resolved_tier);
+
+            let pipeline = build_pipeline(&config)?;
+            tracing::info!(
+                version = env!("CARGO_PKG_VERSION"),
+                tier = resolved_tier.as_str(),
+                injection_patterns = pipeline.injection_count(),
+                pii_patterns = pipeline.pii_count(),
+                "Aiegis sidecar initialised"
+            );
+
+            let state = std::sync::Arc::new(SidecarState {
+                pipeline,
+                tier: resolved_tier,
+                started_at: std::time::Instant::now(),
+                counters: std::sync::Arc::new(Counters::default()),
+            });
+
+            sidecar::run(&host, port, state).await?;
+        }
+
         Command::Stop => {
             match state::read_pid()? {
                 Some(pid) if state::is_pid_alive(pid) => {

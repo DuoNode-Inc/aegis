@@ -71,6 +71,17 @@ pub enum Command {
         action: LicenseAction,
     },
 
+    /// Start the extension sidecar scan server (localhost HTTP API for the browser extension)
+    Sidecar {
+        /// Host to bind on (default: 127.0.0.1)
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+
+        /// Port to listen on (default: 9999)
+        #[arg(short, long, default_value = "9999")]
+        port: u16,
+    },
+
     /// Local LLM tooling (Sentinel builds)
     Llm {
         #[command(subcommand)]

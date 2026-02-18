@@ -9,3 +9,5 @@ dist/
 /tmp/
 .cargo/config.toml
 tools/*/Cargo.lock
+extension/dist/
+extension/*.zip

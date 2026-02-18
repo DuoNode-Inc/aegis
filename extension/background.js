@@ -2,13 +2,19 @@
  * background.js — Aiegis service worker
  *
  * Handles messages from content.js:
- *   WALLET_SCAN  → run wallet-risk.js analysis
- *   SCAN_TEXT    → run WASM injection/PII scan (once WASM is integrated)
+ *   WALLET_SCAN  → wallet-risk.js (JS analysis) + bridge (binary if running)
+ *   SCAN_TEXT    → bridge.js (binary sidecar/gateway → JS fallback)
+ *
+ * Backend priority (auto-detected by bridge.js):
+ *   A. aiegis sidecar  — localhost:9999, scan-only server
+ *   B. aiegis gateway  — localhost:8080, full proxy with /aiegis/scan
+ *   C. JS fallback     — inline pattern matching, no binary needed
  *
  * Stats are stored in chrome.storage.local and surfaced by popup.js.
  */
 
 importScripts("wallet-risk.js");
+importScripts("bridge.js");
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
 async function incrementStat(key) {
@@ -49,7 +55,23 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 async function handleWalletScan({ method, params }) {
-  const result = analyzeWalletRequest(method, params);
+  // JS-level analysis runs first (synchronous, catches eth_sign immediately)
+  const jsResult = analyzeWalletRequest(method, params);
+
+  // If binary is available, also run through full pipeline (catches more edge cases)
+  // For BLOCK verdicts from JS, skip the binary call — no need.
+  let result = jsResult;
+  if (jsResult.action !== "BLOCK") {
+    try {
+      const binaryResult = await AiegisBridge.scanWallet(method, params);
+      // Escalate if binary found something the JS missed
+      if (binaryResult.action === "BLOCK" || binaryResult.action === "FLAG") {
+        result = { ...binaryResult, level: binaryResult.action === "BLOCK" ? 3 : 2 };
+      }
+    } catch (_) {
+      // Binary unavailable — JS result stands
+    }
+  }
 
   await incrementStat("scanned");
 
@@ -79,9 +101,8 @@ async function handleWalletScan({ method, params }) {
 }
 
 async function handleTextScan({ text, source }) {
-  // TODO(wasm): Route through AiegisScanner WASM once crates/aiegis-wasm is built.
-  // For now, run a lightweight JS fallback using the same phishing patterns.
-  const result = lightweightTextScan(text);
+  // Route through bridge: sidecar → gateway → JS fallback (auto-detected)
+  const result = await AiegisBridge.scanText(text, source ?? "extension");
 
   await incrementStat("scanned");
 
@@ -92,6 +113,7 @@ async function handleTextScan({ text, source }) {
       action: "BLOCK",
       type: source ?? "text",
       reason: result.reason,
+      backend: result.backend,
     });
   } else if (result.action === "FLAG") {
     await incrementStat("flagged");
@@ -100,57 +122,9 @@ async function handleTextScan({ text, source }) {
       action: "FLAG",
       type: source ?? "text",
       reason: result.reason,
+      backend: result.backend,
     });
   }
 
   return result;
-}
-
-// ─── Lightweight JS text scanner (pre-WASM fallback) ─────────────────────────
-// These mirror the C-01..C-06 injection-shield.rules patterns
-const INJECTION_PATTERNS = [
-  // C-01: Instruction override
-  /ignore\s+(previous|all|your)\s+(instructions?|rules?)/i,
-  /disregard\s+(previous|your|the)\s+(instructions?|rules?)/i,
-  /forget\s+(previous|your|all|prior)\s+(instructions?|rules?)/i,
-  /override\s+(previous|your|the)\s+(instructions?|rules?)/i,
-  // C-02: Jailbreak
-  /you\s+are\s+now\s+(DAN|jailbroken|in\s+developer\s+mode)/i,
-  /act\s+as\s+(DAN|an\s+unrestricted|if\s+you\s+have\s+no)/i,
-  /enter\s+(developer|DAN)\s+mode/i,
-  /do\s+anything\s+now/i,
-  // C-03: System prompt extraction
-  /reveal\s+your\s+system\s+prompt/i,
-  /show\s+(me\s+)?your\s+system\s+prompt/i,
-  /print\s+your\s+(system\s+prompt|instructions)/i,
-  /repeat\s+your\s+(system\s+prompt|instructions)/i,
-  // C-04: Safety bypass
-  /ignore\s+safety\s+guidelines/i,
-  /bypass\s+(content|safety)\s+filter/i,
-  /disable\s+(content\s+filter|safety)/i,
-  /no\s+restrictions\s+mode/i,
-  // C-05: Control tokens
-  /<\|im_start\|>/,
-  /<\|im_end\|>/,
-  /\[INST\]/,
-  /<<SYS>>/,
-  // C-06: Indirect injection
-  /system\s+prompt\s+override/i,
-  /new\s+system\s+prompt/i,
-  /replace\s+system\s+prompt/i,
-];
-
-function lightweightTextScan(text) {
-  if (!text) return { action: "PASS", reason: null };
-
-  for (const pattern of INJECTION_PATTERNS) {
-    if (pattern.test(text)) {
-      return {
-        action: "BLOCK",
-        reason: `Injection pattern detected: ${pattern.source.substring(0, 60)}`,
-      };
-    }
-  }
-
-  return { action: "PASS", reason: null };
 }
