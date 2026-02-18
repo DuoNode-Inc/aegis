@@ -44,7 +44,7 @@ use tier::{resolve_tier, validate_tier_config, Tier, TierGate};
 /// 2. Sentinel tier: prefer `~/.aiegis/injection-sentinel.rules` (downloaded
 ///    after `aiegis license activate`), then `rules/injection-sentinel.rules`.
 /// 3. Shield tier (or Sentinel without the full ruleset): `rules/injection-shield.rules`.
-/// 4. Absolute fallback: `rules/injection.rules` (original combined file).
+/// 4. Absolute fallback: `rules/injection-sentinel.rules` (full ruleset).
 fn select_injection_rules_path(config: &config::AiegisConfig, tier: Tier) -> std::path::PathBuf {
     use std::path::PathBuf;
 
@@ -76,8 +76,8 @@ fn select_injection_rules_path(config: &config::AiegisConfig, tier: Tier) -> std
         return shield_rules;
     }
 
-    // Absolute fallback — original combined file
-    PathBuf::from("rules/injection.rules")
+    // Absolute fallback — full sentinel ruleset (injection-shield.rules should always exist)
+    PathBuf::from("rules/injection-sentinel.rules")
 }
 
 /// Build the detection pipeline from config and rules files.

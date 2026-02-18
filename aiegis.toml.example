@@ -38,7 +38,7 @@ confidence_threshold = 0.8
 # Enable Aho-Corasick injection pattern scanning
 enabled = true
 # Path to injection patterns file (one pattern per line)
-rules_path = "rules/injection.rules"
+rules_path = "rules/injection-shield.rules"
 
 [detection.pii]
 # Enable regex-based PII detection

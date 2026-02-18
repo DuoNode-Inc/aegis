@@ -8,3 +8,4 @@ models/
 dist/
 /tmp/
 .cargo/config.toml
+tools/*/Cargo.lock

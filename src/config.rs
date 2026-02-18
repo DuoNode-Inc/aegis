@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
-pub const DEFAULT_INJECTION_RULES_PATH: &str = "rules/injection.rules";
+pub const DEFAULT_INJECTION_RULES_PATH: &str = "rules/injection-shield.rules";
 pub const DEFAULT_PII_RULES_PATH: &str = "rules/pii.rules";
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -566,7 +566,7 @@ confidence_threshold = 0.8
 
 [detection.injection]
 enabled = true
-rules_path = "rules/injection.rules"
+rules_path = "rules/injection-shield.rules"
 
 [detection.pii]
 enabled = true
