@@ -35,7 +35,50 @@ use detection::llm::LlmScanContext;
 use detection::web3::{Sensitivity as Web3Sensitivity, Web3Scanner};
 use mode::detect_mode;
 use rules::loader;
-use tier::{resolve_tier, validate_tier_config, TierGate};
+use tier::{resolve_tier, validate_tier_config, Tier, TierGate};
+
+/// Select the injection rules file appropriate for the active tier.
+///
+/// Priority:
+/// 1. If the user has configured a custom path (not the default), honor it.
+/// 2. Sentinel tier: prefer `~/.aiegis/injection-sentinel.rules` (downloaded
+///    after `aiegis license activate`), then `rules/injection-sentinel.rules`.
+/// 3. Shield tier (or Sentinel without the full ruleset): `rules/injection-shield.rules`.
+/// 4. Absolute fallback: `rules/injection.rules` (original combined file).
+fn select_injection_rules_path(config: &config::AiegisConfig, tier: Tier) -> std::path::PathBuf {
+    use std::path::PathBuf;
+
+    // If the user set a non-default path, respect it regardless of tier.
+    if config.uses_custom_pattern_paths() {
+        return config.detection.injection.rules_path.clone();
+    }
+
+    if tier == Tier::Sentinel {
+        // Check for locally downloaded full ruleset first
+        if let Some(home) = std::env::var_os("HOME") {
+            let user_sentinel = PathBuf::from(home)
+                .join(".aiegis")
+                .join("injection-sentinel.rules");
+            if user_sentinel.exists() {
+                return user_sentinel;
+            }
+        }
+        // Fall back to bundled Sentinel rules
+        let bundled_sentinel = PathBuf::from("rules/injection-sentinel.rules");
+        if bundled_sentinel.exists() {
+            return bundled_sentinel;
+        }
+    }
+
+    // Shield tier (or Sentinel without downloaded rules): use Shield subset
+    let shield_rules = PathBuf::from("rules/injection-shield.rules");
+    if shield_rules.exists() {
+        return shield_rules;
+    }
+
+    // Absolute fallback — original combined file
+    PathBuf::from("rules/injection.rules")
+}
 
 /// Build the detection pipeline from config and rules files.
 fn build_pipeline(config: &config::AiegisConfig) -> Result<Pipeline> {
@@ -135,9 +178,13 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Command::Start { mode, host, port } => {
-            let config = apply_overrides(config, mode.as_deref(), host.as_deref(), port);
+            let mut config = apply_overrides(config, mode.as_deref(), host.as_deref(), port);
             logging::init(&config.logging)?;
             validate_tier_config(&config, resolved_tier)?;
+
+            // Override injection rules path based on active tier (unless user set a custom path)
+            config.detection.injection.rules_path =
+                select_injection_rules_path(&config, resolved_tier);
             let classifier_config = resolve_classifier_config(&config.detection.classifier)?;
 
             if config.proxy.tls_mitm.enabled {
@@ -201,6 +248,7 @@ async fn main() -> Result<()> {
                 tier_metrics = resolved_tier.allows_metrics(),
                 tier_dashboard = resolved_tier.allows_dashboard(),
                 injection_patterns = inj_count,
+                injection_rules = %config.detection.injection.rules_path.display(),
                 pii_patterns = pii_count,
                 endpoints = ep_count,
                 "Aiegis Shield Preview starting"

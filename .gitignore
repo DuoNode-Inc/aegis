@@ -1,6 +1,10 @@
 /target
+**/target/
 *.swp
 *.swo
 .DS_Store
 aiegis.toml
 models/
+dist/
+/tmp/
+.cargo/config.toml

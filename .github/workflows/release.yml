@@ -1,0 +1,229 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  # ─── Build Shield binaries (free tier, no optional features) ──────────────
+  build:
+    name: Build · ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            strip: strip -x
+
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            strip: strip -x
+
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+            strip: strip --strip-all
+            apt: ""
+
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04
+            strip: aarch64-linux-gnu-strip --strip-all
+            apt: gcc-aarch64-linux-gnu
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo registry + build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ matrix.target }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.target }}-cargo-
+
+      - name: Install Linux cross-compilation tools
+        if: matrix.apt != ''
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y ${{ matrix.apt }}
+
+      - name: Configure Linux cross linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          mkdir -p .cargo
+          cat >> .cargo/config.toml <<'EOF'
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+          EOF
+
+      - name: Remove monorepo vendor patches (not present in CI)
+        # The [patch.crates-io] block points to ../vendor/ which is a monorepo
+        # path. Shield builds don't enable llm-local features so these crates
+        # are never used, but Cargo still validates patch paths during
+        # dependency resolution. Strip the section before building.
+        run: |
+          python3 -c "
+          import re, sys
+          content = open('Cargo.toml').read()
+          content = re.sub(r'\n\[patch\.crates-io\].*', '', content, flags=re.DOTALL)
+          open('Cargo.toml', 'w').write(content)
+          print('Removed [patch.crates-io] block for CI build')
+          "
+
+      - name: Build Shield binary
+        run: |
+          cargo build \
+            --release \
+            --target ${{ matrix.target }} \
+            --no-default-features
+        env:
+          # Prevent incremental compilation artifacts from polluting cache
+          CARGO_INCREMENTAL: "0"
+
+      - name: Strip binary
+        run: |
+          ${{ matrix.strip }} target/${{ matrix.target }}/release/aiegis
+
+      - name: Show binary size
+        run: |
+          ls -lh target/${{ matrix.target }}/release/aiegis
+
+      - name: Package release archive
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          ARCHIVE="aiegis-${TAG}-${{ matrix.target }}"
+          mkdir -p "dist/${ARCHIVE}"
+
+          # Binary
+          cp "target/${{ matrix.target }}/release/aiegis" "dist/${ARCHIVE}/"
+
+          # Shield rules (free tier subset only — sentinel rules are Sentinel-tier)
+          mkdir -p "dist/${ARCHIVE}/rules"
+          cp rules/injection-shield.rules  "dist/${ARCHIVE}/rules/"
+          cp rules/pii.rules               "dist/${ARCHIVE}/rules/"
+          cp rules/endpoints.rules         "dist/${ARCHIVE}/rules/"
+          cp rules/web3_addresses.rules    "dist/${ARCHIVE}/rules/"
+
+          # Default config
+          cp aiegis.toml.example "dist/${ARCHIVE}/aiegis.toml.example"
+
+          # Installer and docs
+          cp install.sh "dist/${ARCHIVE}/"
+          cp README.md  "dist/${ARCHIVE}/"
+
+          # Archive
+          cd dist
+          tar czf "${ARCHIVE}.tar.gz" "${ARCHIVE}/"
+          echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aiegis-${{ matrix.target }}
+          path: dist/aiegis-*-${{ matrix.target }}.tar.gz
+          retention-days: 1
+
+  # ─── Publish GitHub Release ───────────────────────────────────────────────
+  release:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout (for install.sh in release body)
+        uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          merge-multiple: true
+
+      - name: Generate SHA-256 checksums
+        run: |
+          cd artifacts
+          sha256sum *.tar.gz | tee checksums.sha256
+
+      - name: Extract version and edition from tag
+        id: meta
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          # Detect edition from tag: v0.2.0-shield → Shield, v0.2.0 → Shield (default)
+          if [[ "${TAG}" == *-sentinel ]]; then
+            echo "edition=Sentinel" >> "$GITHUB_OUTPUT"
+          else
+            echo "edition=Shield" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "Aiegis ${{ steps.meta.outputs.tag }} — ${{ steps.meta.outputs.edition }} Edition"
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+          files: |
+            artifacts/*.tar.gz
+            artifacts/checksums.sha256
+          body: |
+            ## Aiegis ${{ steps.meta.outputs.tag }} — ${{ steps.meta.outputs.edition }} Edition
+
+            > **AI Firewall. Local. Fast. No Cloud.**
+            > Intercepts prompt injection, PII leakage, and credential exposure before they reach any AI API.
+
+            ---
+
+            ### Quick Install
+
+            ```bash
+            curl -fsSL https://github.com/DuoNode-Inc/aegis/releases/download/${{ steps.meta.outputs.tag }}/install.sh | bash
+            ```
+
+            Or download the binary directly for your platform:
+
+            | File | Platform |
+            |------|----------|
+            | `aiegis-${{ steps.meta.outputs.tag }}-aarch64-apple-darwin.tar.gz` | macOS Apple Silicon (M1/M2/M3/M4) |
+            | `aiegis-${{ steps.meta.outputs.tag }}-x86_64-apple-darwin.tar.gz` | macOS Intel |
+            | `aiegis-${{ steps.meta.outputs.tag }}-x86_64-unknown-linux-gnu.tar.gz` | Linux x86_64 |
+            | `aiegis-${{ steps.meta.outputs.tag }}-aarch64-unknown-linux-gnu.tar.gz` | Linux ARM64 |
+
+            ### What's Included
+
+            **Shield Edition (free):**
+            - Aho-Corasick injection detection — 6 classifier groups, <1ms p99
+            - Regex PII detection — SSN, credit cards, API keys, private keys, crypto wallets
+            - Shannon entropy analysis — detect encoded data exfiltration
+            - Gateway proxy — point your SDK at localhost, Aiegis forwards to real AI APIs
+            - HTTP forward proxy — set `HTTP_PROXY`, all AI traffic scanned
+
+            **Upgrade to Sentinel** for the full 40-classifier ruleset, neural classifier,
+            local LLM detection, TLS MITM, rate limiting, and dashboard.
+            Visit https://aiegis.xyz for pricing.
+
+            ### Verify Checksum
+
+            ```bash
+            sha256sum -c checksums.sha256
+            ```
