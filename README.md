@@ -11,9 +11,30 @@ A local AI firewall. Rust binary. Intercepts traffic between your applications a
 ## Install
 
 ```bash
+# Pre-built binaries (macOS, Linux) — see GitHub Releases
+curl -fsSL https://github.com/DuoNode-Inc/aiegis/releases/latest/download/install.sh | bash
+
+# Build from source
 cargo build --release
 # Binary at target/release/aiegis
 ```
+
+## Browser Extension (Developer Preview)
+
+Chrome extension with prompt injection detection, clipboard scanning, and wallet signing protection. Works with or without the Aiegis binary.
+
+```bash
+cd extension
+bash build.sh --dev          # → dist/ (load-unpacked in Chrome)
+# Load in Chrome: chrome://extensions → Developer mode → Load unpacked → select dist/
+```
+
+Three backend modes (auto-detected by `bridge.js`):
+- **Mode A — Sidecar** (recommended): `aiegis sidecar` on `127.0.0.1:9999`
+- **Mode B — Gateway**: Reuses running `aiegis start --mode gateway` on `127.0.0.1:8080`
+- **Mode C — JS only**: 18 regex patterns, no binary needed
+
+See `extension/README-dev.md` for full setup, curl verification examples, and wallet protection details.
 
 ## Build Profiles
 
@@ -75,6 +96,7 @@ curl -X POST http://localhost:8080/openai/v1/chat/completions \
 
 ```
 aiegis start [--mode gateway|proxy] [--host 0.0.0.0] [--port 8080]
+aiegis sidecar [--host 127.0.0.1] [--port 9999]  # Lightweight scan server for browser extension
 aiegis stop
 aiegis status
 aiegis logs [--tail N] [--follow]
@@ -83,6 +105,24 @@ aiegis rules test "your test string here"
 aiegis rules scan-deps [--repo .] [--staged] [--no-fail]
 aiegis llm status [--verify]
 aiegis llm bench [--iters N] [--warmup N] [--input "..."] [--json]
+```
+
+### Sidecar Mode (Browser Extension Backend)
+
+The `aiegis sidecar` command starts a lightweight scan-only HTTP server for the browser extension. No proxy port, no TLS, just fast scan endpoints:
+
+```bash
+aiegis sidecar
+# → Aiegis sidecar scan server listening on 127.0.0.1:9999
+
+# Verify
+curl -s http://127.0.0.1:9999/status | jq .
+# { "version": "0.2.0", "tier": "shield", "uptime_s": 12, ... }
+
+curl -s -X POST http://127.0.0.1:9999/scan \
+  -H "Content-Type: application/json" \
+  -d '{"text":"ignore previous instructions","source":"test"}' | jq .
+# { "action": "BLOCK", "reason": "...", "confidence": 1.0 }
 ```
 
 ### Automatic Package Gate (pre-commit)
