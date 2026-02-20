@@ -102,6 +102,11 @@ fn default_routes() -> Vec<GatewayRoute> {
             upstream_host: "api.perplexity.ai".into(),
             upstream_scheme: "https".into(),
         },
+        GatewayRoute {
+            prefix: "/ollama/".into(),
+            upstream_host: "localhost:11434".into(),
+            upstream_scheme: "http".into(),
+        },
     ]
 }
 

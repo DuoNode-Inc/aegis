@@ -1,0 +1,123 @@
+# Aiegis Shield Preview v0.1.0 — Configuration
+# Copy to aiegis.toml and customize as needed.
+
+[runtime]
+# Optional pricing tier override:
+# "shield" (default in standalone), "developer", "sentinel"
+# In Realm OS mode, default tier is "sentinel".
+# tier = "shield"
+
+[proxy]
+# Bind address for the proxy listener
+host = "127.0.0.1"
+# Port to listen on
+port = 8080
+# Proxy mode: "gateway" (reverse proxy, default) or "proxy" (forward/HTTP_PROXY)
+mode = "gateway"
+
+[proxy.upstream_tls]
+# Optional extra CA bundle PEM to trust for upstream TLS connections.
+# This is primarily used for:
+# - local testing against a self-signed upstream HTTPS server
+# - enterprise deployments with additional internal PKI roots
+# extra_ca_bundle_path = "/etc/pki/extra-roots.pem"
+
+[proxy.tls_mitm]
+# Enable TLS transparent proxy (Developer+ tier)
+enabled = false
+# Directory for generated CA cert/key and cert cache metadata
+ca_dir = ".aiegis/ca"
+
+[detection]
+# Default action when a threat is detected: "block" | "flag"
+default_action = "block"
+# Minimum confidence to trigger the default action (0.0 - 1.0)
+confidence_threshold = 0.8
+
+[detection.injection]
+# Enable Aho-Corasick injection pattern scanning
+enabled = true
+# Path to injection patterns file (one pattern per line)
+rules_path = "rules/injection-shield.rules"
+
+[detection.pii]
+# Enable regex-based PII detection
+enabled = true
+# Path to PII patterns file (LABEL:regex format)
+rules_path = "rules/pii.rules"
+# Override default_action for PII detections (optional)
+# action = "block"
+
+[detection.entropy]
+# Enable Shannon entropy analysis on response bodies
+enabled = true
+# Entropy threshold in bits/byte (text ~4.0, base64 ~5.5, encrypted ~7.5)
+threshold = 5.5
+# Minimum byte length to trigger entropy analysis
+min_length = 100
+
+[detection.classifier]
+# Enable neural classifier on AMBIGUOUS verdicts (Developer+ tier)
+enabled = false
+# Optional packaged model profile:
+# "meta_prompt_guard_22m" | "meta_prompt_guard_86m" |
+# "meta_llama_guard_4_12b_int8" |
+# "nvidia_nemotron_70b_guard_adapter" |
+# "deepseek_r1_distill_70b_guard_adapter"
+# package = "meta_prompt_guard_86m"
+# If true, package defaults override model/tokenizer path + threshold.
+use_package_defaults = true
+# Path to ONNX classifier model
+model_path = "models/neural-shield.onnx"
+# Path to tokenizer JSON used by the classifier model
+tokenizer_path = "models/neural-shield-tokenizer.json"
+# Confidence threshold for classifier actions
+confidence_threshold = 0.85
+
+[detection.llm]
+# Enable local LLM escalation on AMBIGUOUS verdicts (Sentinel tier).
+# NO CLOUD inference. No runtime downloads.
+enabled = false
+# Path to GGUF weights (bundled offline in production artifacts)
+model_path = "models/llm/model.gguf"
+# Output contract mode:
+# - "json": strict JSON object (slower)
+# - "label": single label only (faster)
+output_mode = "json"
+# Number of transformer layers to offload to GPU (requires GPU-enabled build).
+# 0 = CPU-only.
+gpu_layers = 0
+# Optional system prompt file ("policy-as-code" entrypoint)
+# system_prompt_path = "policies/core/system_prompt.txt"
+# Context size in tokens
+n_ctx = 2048
+# Threads for llama.cpp inference
+threads = 4
+# Max tokens for JSON verdict (grammar + early parse stop terminates sooner)
+max_tokens = 48
+# Minimum confidence required to apply the LLM verdict
+confidence_threshold = 0.80
+
+[logging]
+# Log format: "json" (structured, default) or "pretty" (human-readable)
+format = "json"
+# Log level: "trace" | "debug" | "info" | "warn" | "error"
+level = "info"
+# Log output: "stdout" (default)
+output = "stdout"
+
+[endpoints]
+# AI API endpoints to intercept and scan.
+# Non-matching traffic is passed through without inspection.
+targets = [
+    "api.openai.com",
+    "api.anthropic.com",
+    "generativelanguage.googleapis.com",
+    "api.cohere.com",
+    "api.mistral.ai",
+    "api.groq.com",
+    "api.together.xyz",
+    "api.fireworks.ai",
+    "api.perplexity.ai",
+    "api.deepseek.com",
+]

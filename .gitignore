@@ -1,5 +1,13 @@
 /target
+**/target/
 *.swp
 *.swo
 .DS_Store
-aegis.toml
+aiegis.toml
+models/
+dist/
+/tmp/
+.cargo/config.toml
+tools/*/Cargo.lock
+extension/dist/
+extension/*.zip

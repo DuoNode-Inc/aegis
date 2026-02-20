@@ -1,0 +1,27 @@
+[package]
+name = "aiegis-keygen"
+version = "0.1.0"
+edition = "2021"
+description = "License key generation tool for Aiegis — DuoNode Inc internal use only"
+license = "Apache-2.0"
+
+# Standalone crate — intentionally NOT part of the main aiegis workspace.
+# This keeps the signing key toolchain separate from the product binary.
+
+[dependencies]
+# Ed25519 signing with PKCS8 PEM support
+ed25519-dalek = { version = "2.0", features = ["pkcs8", "rand_core"] }
+pkcs8 = { version = "0.10", features = ["pem", "std"] }
+# Random number generation for keypair generation
+rand = "0.8"
+# Base64 encoding/decoding (same version as main crate)
+base64 = "0.22"
+# Serialization for license claims
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Timestamp handling
+chrono = { version = "0.4", features = ["serde"] }
+# CLI argument parsing
+clap = { version = "4", features = ["derive"] }
+# Error handling
+anyhow = "1"

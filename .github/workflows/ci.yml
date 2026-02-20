@@ -1,0 +1,146 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, "draft/**", "feat/**", "fix/**"]
+  pull_request:
+    branches: [main, master]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  # ─── Format check ─────────────────────────────────────────────────────────
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --check
+
+  # ─── Clippy ───────────────────────────────────────────────────────────────
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Remove monorepo vendor patches
+        run: |
+          python3 -c "
+          import re
+          content = open('Cargo.toml').read()
+          content = re.sub(r'\n\[patch\.crates-io\].*', '', content, flags=re.DOTALL)
+          open('Cargo.toml', 'w').write(content)
+          "
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target/
+          key: ubuntu-clippy-${{ hashFiles('Cargo.lock') }}
+      - run: cargo clippy --no-default-features -- -D warnings
+
+  # ─── Tests ────────────────────────────────────────────────────────────────
+  test:
+    name: Test · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Remove monorepo vendor patches
+        run: |
+          python3 -c "
+          import re
+          content = open('Cargo.toml').read()
+          content = re.sub(r'\n\[patch\.crates-io\].*', '', content, flags=re.DOTALL)
+          open('Cargo.toml', 'w').write(content)
+          "
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target/
+          key: ${{ matrix.os }}-test-${{ hashFiles('Cargo.lock') }}
+
+      - name: Run tests
+        run: cargo test --bin aiegis --no-default-features
+
+  # ─── Build check (all four release targets) ───────────────────────────────
+  build-check:
+    name: Build check · ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04
+            apt: gcc-aarch64-linux-gnu
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools
+        if: matrix.apt != ''
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y ${{ matrix.apt }}
+
+      - name: Configure aarch64-linux linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          mkdir -p .cargo
+          cat >> .cargo/config.toml <<'EOF'
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+          EOF
+
+      - name: Remove monorepo vendor patches
+        run: |
+          python3 -c "
+          import re
+          content = open('Cargo.toml').read()
+          content = re.sub(r'\n\[patch\.crates-io\].*', '', content, flags=re.DOTALL)
+          open('Cargo.toml', 'w').write(content)
+          "
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ matrix.target }}-build-${{ hashFiles('Cargo.lock') }}
+
+      - name: Cargo check
+        run: |
+          cargo check \
+            --target ${{ matrix.target }} \
+            --no-default-features

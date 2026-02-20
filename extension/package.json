@@ -1,0 +1,14 @@
+{
+  "name": "aiegis-extension",
+  "version": "0.2.0",
+  "description": "Aiegis browser extension — AI security firewall + wallet signing protection",
+  "private": true,
+  "scripts": {
+    "build": "bash build.sh",
+    "build:dev": "bash build.sh --dev",
+    "clean": "rm -rf dist aiegis-extension-*.zip"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

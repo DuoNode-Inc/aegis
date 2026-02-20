@@ -1,10 +1,23 @@
 [package]
-name = "aegis"
-version = "0.1.0"
+name = "aiegis"
+version = "0.2.0"
 edition = "2021"
 description = "AI security firewall proxy — local, fast, no cloud"
 license = "Apache-2.0"
-repository = "https://github.com/rijos-software/aegis"
+repository = "https://github.com/DuoNode-Inc/aiegis"
+
+[features]
+default = []
+tls-mitm = ["dep:rcgen"]
+neural = ["dep:ort", "dep:tokenizers"]
+embed-models = ["neural"]
+llm-local = ["dep:llama-cpp-2", "dep:llama-cpp-sys-2"]
+# GPU backends for llama.cpp (build-time only; runtime remains local).
+# - CUDA: Linux + NVIDIA GPUs (A100/T4/L4/etc)
+# - Metal: macOS + Apple Silicon (M-series)
+llm-cuda = ["llm-local", "llama-cpp-2/cuda"]
+llm-metal = ["llm-local", "llama-cpp-2/metal"]
+embed-llm-weights = ["llm-local"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -17,6 +30,7 @@ tokio-rustls = "0.26"
 rustls = { version = "0.23", features = ["ring"] }
 hyper-rustls = { version = "0.27", features = ["http1", "ring", "webpki-roots"] }
 webpki-roots = "0.26"
+rustls-pemfile = "2"
 aho-corasick = "1"
 regex = "1"
 toml = "0.8"
@@ -27,6 +41,14 @@ tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
 thiserror = "2"
+encoding_rs = "0.8"
+ed25519-dalek = { version = "2", features = ["pkcs8"] }
+base64 = "0.22"
+rcgen = { version = "0.14", optional = true, features = ["x509-parser"] }
+ort = { version = "2.0.0-rc.11", optional = true, default-features = false, features = ["std", "ndarray", "load-dynamic"] }
+tokenizers = { version = "0.22", optional = true, default-features = false, features = ["fancy-regex"] }
+llama-cpp-2 = { version = "0.1.133", optional = true, default-features = false, features = ["sampler"] }
+llama-cpp-sys-2 = { version = "0.1.133", optional = true }
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json"] }
@@ -34,3 +56,7 @@ tokio-test = "0.4"
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
+
+[patch.crates-io]
+llama-cpp-2 = { path = "../vendor/llama-cpp-2-0.1.133" }
+llama-cpp-sys-2 = { path = "../vendor/llama-cpp-sys-2-0.1.133" }

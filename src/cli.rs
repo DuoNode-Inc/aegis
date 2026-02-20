@@ -1,4 +1,4 @@
-//! CLI subcommand definitions for Aegis.
+//! CLI subcommand definitions for Aiegis.
 //!
 //! All user-facing commands are defined here using clap derive macros.
 //! The actual implementation logic lives in the respective modules.
@@ -8,16 +8,16 @@ use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(
-    name = "aegis",
+    name = "aiegis",
     version,
     about = "AI security firewall proxy — local, fast, no cloud",
-    long_about = "Aegis intercepts traffic between your applications and AI API endpoints.\n\
+    long_about = "Aiegis intercepts traffic between your applications and AI API endpoints.\n\
                   It scans prompts and responses for prompt injection, PII leakage,\n\
                   credential exposure, and encoded data exfiltration.\n\
                   All classification runs on-device. Nothing leaves the machine."
 )]
 pub struct Cli {
-    /// Path to aegis.toml config file
+    /// Path to aiegis.toml config file
     #[arg(short, long, global = true)]
     pub config: Option<PathBuf>,
 
@@ -27,11 +27,11 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Start the Aegis proxy
+    /// Start the Aiegis proxy
     Start {
         /// Proxy mode: "gateway" (reverse proxy) or "proxy" (forward/HTTP_PROXY)
-        #[arg(short, long, default_value = "gateway")]
-        mode: String,
+        #[arg(short, long)]
+        mode: Option<String>,
 
         /// Host to bind on
         #[arg(long)]
@@ -42,13 +42,13 @@ pub enum Command {
         port: Option<u16>,
     },
 
-    /// Stop the running Aegis proxy
+    /// Stop the running Aiegis proxy
     Stop,
 
-    /// Show Aegis proxy status
+    /// Show Aiegis proxy status
     Status,
 
-    /// View Aegis logs
+    /// View Aiegis logs
     Logs {
         /// Number of recent log lines to show
         #[arg(short = 'n', long, default_value = "20")]
@@ -64,6 +64,48 @@ pub enum Command {
         #[command(subcommand)]
         action: RulesAction,
     },
+
+    /// Manage license key
+    License {
+        #[command(subcommand)]
+        action: LicenseAction,
+    },
+
+    /// Start the extension sidecar scan server (localhost HTTP API for the browser extension)
+    Sidecar {
+        /// Host to bind on (default: 127.0.0.1)
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+
+        /// Port to listen on (default: 9999)
+        #[arg(short, long, default_value = "9999")]
+        port: u16,
+    },
+
+    /// Local LLM tooling (Sentinel builds)
+    Llm {
+        #[command(subcommand)]
+        action: LlmAction,
+    },
+
+    #[cfg(feature = "tls-mitm")]
+    /// TLS tooling (Developer+ builds)
+    Tls {
+        #[command(subcommand)]
+        action: TlsAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum LicenseAction {
+    /// Activate a license key
+    Activate {
+        /// The license key string
+        key: String,
+    },
+
+    /// Show current license status
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -75,5 +117,109 @@ pub enum RulesAction {
     Test {
         /// The text to test against all detectors
         input: String,
+    },
+
+    /// Scan a repository for suspicious package/dependency malware indicators
+    ScanDeps {
+        /// Repo path to scan (defaults to current directory)
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+
+        /// Scan only staged files (for pre-commit hooks)
+        #[arg(long)]
+        staged: bool,
+
+        /// Do not fail process exit when high-severity findings are present
+        #[arg(long)]
+        no_fail: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum LlmAction {
+    /// Show local LLM status (weights present, optionally verify load).
+    Status {
+        /// Attempt to load the GGUF model to verify it is usable.
+        #[arg(long)]
+        verify: bool,
+    },
+
+    /// Benchmark local LLM classification latency (no network; runs on-device).
+    Bench {
+        /// Number of measured iterations.
+        #[arg(long, default_value = "50")]
+        iters: usize,
+
+        /// Number of warmup iterations (not counted).
+        #[arg(long, default_value = "5")]
+        warmup: usize,
+
+        /// Input text to classify for the benchmark.
+        #[arg(long, default_value = "Summarize the following text: hello world")]
+        input: String,
+
+        /// Output a machine-readable JSON summary.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Classify a single input with the local LLM classifier (no network).
+    ///
+    /// This is intended for offline evaluation harnesses (e.g. PINT-style benchmarks).
+    Classify {
+        /// Input text to classify.
+        #[arg(long)]
+        input: String,
+
+        /// Scan context: request|response (defaults to request).
+        #[arg(long)]
+        context: Option<String>,
+
+        /// Output JSON (verdict/confidence/reason).
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[cfg(feature = "tls-mitm")]
+#[derive(Subcommand)]
+pub enum TlsAction {
+    /// Local CA management for TLS MITM.
+    Ca {
+        #[command(subcommand)]
+        action: CaAction,
+    },
+}
+
+#[cfg(feature = "tls-mitm")]
+#[derive(Subcommand)]
+pub enum CaAction {
+    /// Create (or verify) the local CA material on disk.
+    Init {
+        /// CA directory (defaults to proxy.tls_mitm.ca_dir from config)
+        #[arg(long)]
+        ca_dir: Option<PathBuf>,
+
+        /// Overwrite existing CA files.
+        #[arg(long)]
+        force: bool,
+
+        /// Print the CA certificate PEM to stdout after creation.
+        #[arg(long)]
+        print_cert: bool,
+    },
+
+    /// Print the CA certificate PEM to stdout.
+    Print {
+        /// CA directory (defaults to proxy.tls_mitm.ca_dir from config)
+        #[arg(long)]
+        ca_dir: Option<PathBuf>,
+    },
+
+    /// Show CA paths and whether files exist.
+    Status {
+        /// CA directory (defaults to proxy.tls_mitm.ca_dir from config)
+        #[arg(long)]
+        ca_dir: Option<PathBuf>,
     },
 }

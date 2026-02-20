@@ -1,7 +1,7 @@
 //! Reverse proxy mode — routes by path prefix to upstream AI APIs.
 //!
 //! The default mode. User points their SDK base URL at localhost:8080/openai
-//! and Aegis forwards to api.openai.com, scanning all traffic through the
+//! and Aiegis forwards to api.openai.com, scanning all traffic through the
 //! detection pipeline.
 
 use std::convert::Infallible;
@@ -15,16 +15,16 @@ use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
-use hyper_rustls::ConfigBuilderExt;
 use hyper_util::rt::TokioIo;
 use serde_json::json;
 use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
 
-use crate::config::AegisConfig;
+use crate::config::AiegisConfig;
 use crate::detection::pipeline::Pipeline;
 use crate::endpoints::EndpointMatcher;
 use crate::proxy::handler;
+use crate::proxy::upstream_tls;
 
 type HttpsClient = hyper_util::client::legacy::Client<
     hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
@@ -33,7 +33,7 @@ type HttpsClient = hyper_util::client::legacy::Client<
 
 /// Shared state for the gateway proxy.
 struct GatewayState {
-    pipeline: Pipeline,
+    pipeline: Arc<Pipeline>,
     endpoints: EndpointMatcher,
     client: HttpsClient,
     max_body_size: usize,
@@ -41,12 +41,10 @@ struct GatewayState {
 }
 
 /// Build an HTTPS client using rustls + webpki roots (built once, reused).
-fn build_https_client() -> Result<HttpsClient> {
+fn build_https_client(extra_ca_bundle_path: Option<&std::path::Path>) -> Result<HttpsClient> {
     use hyper_util::client::legacy::Client;
 
-    let tls = rustls::ClientConfig::builder()
-        .with_webpki_roots()
-        .with_no_client_auth();
+    let tls = upstream_tls::build_rustls_client_config(extra_ca_bundle_path)?;
 
     let https = hyper_rustls::HttpsConnectorBuilder::new()
         .with_tls_config(tls)
@@ -58,14 +56,14 @@ fn build_https_client() -> Result<HttpsClient> {
 }
 
 /// Start the gateway reverse proxy.
-pub async fn run(config: AegisConfig, pipeline: Pipeline) -> Result<()> {
+pub async fn run(config: AiegisConfig, pipeline: Pipeline) -> Result<()> {
     let addr: SocketAddr = format!("{}:{}", config.proxy.host, config.proxy.port).parse()?;
     let endpoints = EndpointMatcher::new(&config.endpoints.targets);
-    let client = build_https_client()?;
+    let client = build_https_client(config.proxy.upstream_tls.extra_ca_bundle_path.as_deref())?;
     let semaphore = Arc::new(Semaphore::new(config.proxy.max_connections));
 
     let state = Arc::new(GatewayState {
-        pipeline,
+        pipeline: Arc::new(pipeline),
         endpoints,
         client,
         max_body_size: config.proxy.max_body_size,
@@ -141,16 +139,23 @@ async fn handle_request(
 
     // Match the path to a gateway route
     let Some((upstream_url, stripped_path)) = state.endpoints.match_route(&path) else {
-        return Ok(json_error(404, "aegis_no_route", "No matching AI provider route"));
+        return Ok(json_error(
+            404,
+            "aiegis_no_route",
+            "No matching AI provider route",
+        ));
     };
 
     // Buffer the request body with size limit
-    let body_bytes = match Limited::new(req.into_body(), state.max_body_size).collect().await {
+    let body_bytes = match Limited::new(req.into_body(), state.max_body_size)
+        .collect()
+        .await
+    {
         Ok(collected) => collected.to_bytes(),
         Err(_) => {
             return Ok(json_error(
                 413,
-                "aegis_body_too_large",
+                "aiegis_body_too_large",
                 "Request body exceeds maximum allowed size",
             ));
         }
@@ -167,7 +172,7 @@ async fn handle_request(
     // Run detection pipeline on request body
     if !body_str.is_empty() {
         if let Some(block_resp) = handler::scan_request(
-            &state.pipeline,
+            state.pipeline.as_ref(),
             &body_str,
             source,
             destination,
@@ -198,7 +203,7 @@ async fn handle_request(
             tracing::error!(error = %err, "Failed to build upstream request");
             return Ok(json_error(
                 500,
-                "aegis_internal",
+                "aiegis_internal",
                 "Failed to build upstream request",
             ));
         }
@@ -211,12 +216,15 @@ async fn handle_request(
             let resp_headers = resp.headers().clone();
 
             // Buffer response with size limit
-            let resp_body = match Limited::new(resp.into_body(), state.max_body_size).collect().await {
+            let resp_body = match Limited::new(resp.into_body(), state.max_body_size)
+                .collect()
+                .await
+            {
                 Ok(collected) => collected.to_bytes(),
                 Err(_) => {
                     return Ok(json_error(
                         502,
-                        "aegis_upstream_error",
+                        "aiegis_upstream_error",
                         "Upstream response exceeds maximum allowed size",
                     ));
                 }
@@ -225,7 +233,7 @@ async fn handle_request(
             // Scan response body for PII/entropy (exfiltration detection)
             if !resp_body.is_empty() {
                 let resp_str = String::from_utf8_lossy(&resp_body);
-                handler::scan_response(&state.pipeline, &resp_str, source, destination);
+                handler::scan_response(state.pipeline.as_ref(), &resp_str, source, destination);
             }
 
             let mut response = Response::builder().status(status);
@@ -241,7 +249,7 @@ async fn handle_request(
         }
         Err(err) => {
             tracing::error!(error = %err, upstream = %upstream_url, "Upstream request failed");
-            Ok(json_error(502, "aegis_upstream_error", &err.to_string()))
+            Ok(json_error(502, "aiegis_upstream_error", &err.to_string()))
         }
     }
 }

@@ -9,13 +9,13 @@ use hyper::{Response, StatusCode};
 use serde_json::json;
 
 use crate::detection::pipeline::{Action, Pipeline, Verdict};
-use crate::logging::event::AegisEvent;
+use crate::logging::event::AiegisEvent;
 
 /// Build a 403 block response matching the spec's JSON format.
 pub fn block_response(verdict: &Verdict) -> Response<Full<Bytes>> {
     let body = json!({
         "error": {
-            "type": "aegis_blocked",
+            "type": "aiegis_blocked",
             "detector": verdict.detector,
             "reason": verdict.reason,
             "confidence": verdict.confidence,
@@ -39,10 +39,10 @@ pub fn scan_request(
     method: &str,
     path: &str,
 ) -> Option<Response<Full<Bytes>>> {
-    let verdict = pipeline.scan(body);
+    let verdict = pipeline.scan_request(body);
 
     // Emit structured event
-    let event = AegisEvent {
+    let event = AiegisEvent {
         timestamp: chrono::Utc::now().to_rfc3339(),
         event_type: "request".into(),
         action: verdict.action.to_string().to_lowercase(),
@@ -92,13 +92,20 @@ mod tests {
         Pipeline::new(
             Some(injection),
             Some(pii),
+            None,
+            None,
             PipelineConfig {
                 injection_enabled: true,
                 pii_enabled: true,
+                web3_enabled: false,
                 entropy_enabled: false,
                 entropy_threshold: 5.5,
                 entropy_min_length: 100,
                 default_action: Action::Block,
+                classifier_enabled: false,
+                classifier_threshold: 0.85,
+                llm_enabled: false,
+                llm_threshold: 0.0,
             },
         )
     }
@@ -135,7 +142,7 @@ mod tests {
         let collected = body.collect().await.unwrap();
         let data = collected.to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&data).unwrap();
-        assert_eq!(json["error"]["type"], "aegis_blocked");
+        assert_eq!(json["error"]["type"], "aiegis_blocked");
         assert_eq!(json["error"]["detector"], "pii");
         assert_eq!(json["error"]["reason"], "SSN detected");
         assert_eq!(json["error"]["confidence"], 0.95);
@@ -215,14 +222,14 @@ mod tests {
 /// Responses don't carry prompt injection attacks, but they may leak PII or
 /// contain high-entropy encoded data (exfiltration via model output).
 pub fn scan_response(pipeline: &Pipeline, body: &str, source: &str, destination: &str) {
-    let verdict = pipeline.scan(body);
+    let verdict = pipeline.scan_response(body);
 
     // Only emit events for non-pass verdicts on responses to keep log volume sane
     if verdict.action == Action::Pass {
         return;
     }
 
-    let event = AegisEvent {
+    let event = AiegisEvent {
         timestamp: chrono::Utc::now().to_rfc3339(),
         event_type: "response".into(),
         action: verdict.action.to_string().to_lowercase(),
