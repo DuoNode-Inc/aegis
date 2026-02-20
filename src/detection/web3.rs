@@ -13,6 +13,7 @@ use std::collections::{HashMap, HashSet};
 
 /// Severity of a Web3 detection finding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum Web3Action {
     Block,
     Flag,
@@ -50,6 +51,7 @@ impl Default for Sensitivity {
 /// Web3 JSON-RPC scanner.
 pub struct Web3Scanner {
     scam_addresses: HashSet<String>,
+    #[allow(dead_code)]
     dangerous_selectors: HashMap<&'static str, &'static str>,
     sensitivity: Sensitivity,
 }
@@ -128,6 +130,7 @@ impl Web3Scanner {
     }
 
     /// Add a scam address to the blocklist (lowercase hex, with 0x prefix).
+    #[allow(dead_code)]
     pub fn add_scam_address(&mut self, addr: &str) {
         self.scam_addresses.insert(addr.to_lowercase());
     }

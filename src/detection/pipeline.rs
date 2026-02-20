@@ -71,6 +71,7 @@ pub struct Pipeline {
 
 impl Pipeline {
     /// Create a new pipeline with the given scanners and config.
+    #[allow(dead_code)]
     pub fn new(
         injection: Option<InjectionScanner>,
         pii: Option<PiiScanner>,
